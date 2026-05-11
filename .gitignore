@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+venv/
+
+# IDE/OS
+.idea/
+.DS_Store
+
+# Secrets
+.env
+
+# Runtime uploads
+uploads/
