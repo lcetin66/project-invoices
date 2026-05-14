@@ -255,62 +255,10 @@ require_once __DIR__ . '/includes/header.php';
 
     <section class="rechnungen-section">
         <div class="section-header">
-            <h2>Meine Rechnungen</h2>
-            <div class="filter-group">
-                <select id="filterKategorie" class="filter-select">
-                    <option value="">Alle Kategorien</option>
-                    <?php foreach ($kategorien as $kat): ?>
-                        <option value="<?php echo htmlspecialchars($kat['name']); ?>"><?php echo htmlspecialchars($kat['name']); ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <form method="GET">
-                    <select name="zeitraum" class="filter-select" onchange="this.form.submit()">
-                        <option value="day" <?php echo $zeit_gruppe === 'day' ? 'selected' : ''; ?>>Täglich</option>
-                        <option value="week" <?php echo $zeit_gruppe === 'week' ? 'selected' : ''; ?>>Wöchentlich</option>
-                        <option value="month" <?php echo $zeit_gruppe === 'month' ? 'selected' : ''; ?>>Monatlich</option>
-                        <option value="year" <?php echo $zeit_gruppe === 'year' ? 'selected' : ''; ?>>Jährlich</option>
-                    </select>
-                </form>
-            </div>
+            <h2>Rechnungen</h2>
+            <p>Alle Rechnungen wurden in die eigene Seite verschoben.</p>
+            <a href="rechnungen.php" class="btn btn-outline">Zu Rechnungen</a>
         </div>
-
-        <?php if (empty($alle_rechnungen)): ?>
-            <div class="empty-state">
-                <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-                    <polyline points="14,2 14,8 20,8"/>
-                </svg>
-                <p>Noch keine Rechnungen hochgeladen.</p>
-            </div>
-        <?php else: ?>
-            <h3 class="split-title">Eingangsrechnungen</h3>
-            <?php if (empty($eingang_gruppen)): ?>
-                <p class="empty-note">Keine Eingangsrechnungen vorhanden.</p>
-            <?php else: ?>
-                <?php foreach ($eingang_gruppen as $gruppenname => $rechnungen): ?>
-                    <h4 class="group-title"><?php echo htmlspecialchars($gruppenname); ?></h4>
-                    <div class="rechnungen-grid">
-                        <?php foreach ($rechnungen as $rechnung): ?>
-                            <?php render_rechnungs_card($rechnung, $kategorien); ?>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endforeach; ?>
-            <?php endif; ?>
-
-            <h3 class="split-title">Ausgangsrechnungen</h3>
-            <?php if (empty($ausgang_gruppen)): ?>
-                <p class="empty-note">Keine Ausgangsrechnungen vorhanden.</p>
-            <?php else: ?>
-                <?php foreach ($ausgang_gruppen as $gruppenname => $rechnungen): ?>
-                    <h4 class="group-title"><?php echo htmlspecialchars($gruppenname); ?></h4>
-                    <div class="rechnungen-grid">
-                        <?php foreach ($rechnungen as $rechnung): ?>
-                            <?php render_rechnungs_card($rechnung, $kategorien); ?>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endforeach; ?>
-            <?php endif; ?>
-        <?php endif; ?>
     </section>
 </div>
 
