@@ -34,7 +34,7 @@ def process_invoice_file(datei_pfad: str, api_key: str = "") -> dict:
         except Exception:
             text = ""
 
-    ergebnis = klassifizieren(text, api_key=api_key)
+    ergebnis = klassifizieren(text, api_key=api_key, datei_pfad=datei_pfad)
     qualitaet_score = qualitaet_score_berechnen(text, ergebnis)
     return {
         "ergebnis": ergebnis,
