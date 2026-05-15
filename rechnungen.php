@@ -196,7 +196,13 @@ function render_rechnungs_card_rechnung(array $rechnung, array $kategorien, stri
                     <path d="M16.5 3.5a2.1 2.1 0 113 3L7 19l-4 1 1-4 12.5-12.5z"/>
                 </svg>
             </a>
-            <form method="POST" class="delete-form" onsubmit="return confirm('Rechnung wirklich löschen?');">
+            <form
+                method="POST"
+                class="delete-form js-delete-form"
+                data-lieferant="<?php echo htmlspecialchars((string)($rechnung['lieferant'] ?: 'Unbekannt')); ?>"
+                data-betrag="<?php echo number_format((float)($rechnung['brutto_betrag'] ?? 0), 2, ',', ' '); ?>"
+                data-waehrung="<?php echo htmlspecialchars((string)($rechnung['waehrung'] ?? 'EUR')); ?>"
+            >
                 <input type="hidden" name="loeschen_id" value="<?php echo (int)$rechnung['id']; ?>">
                 <button type="submit" class="action-square action-delete" title="Löschen" aria-label="Löschen">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -255,7 +261,15 @@ require_once __DIR__ . '/includes/header.php';
             </div>
             <div class="edit-actions">
                 <a href="uploads/<?php echo htmlspecialchars($edit_rechnung['dateiname']); ?>" target="_blank" class="btn btn-outline">Ansehen</a>
-                <button type="submit" formaction="rechnungen.php?<?php echo http_build_query(['zeitraum' => $zeit_gruppe, 'typ' => $typ_filter, 'kategorie' => $kat_filter]); ?>" formmethod="post" name="loeschen_id" value="<?php echo (int)$edit_rechnung['id']; ?>" class="btn btn-outline">Löschen</button>
+                <button
+                    type="button"
+                    class="btn btn-outline js-delete-edit"
+                    data-id="<?php echo (int)$edit_rechnung['id']; ?>"
+                    data-action="rechnungen.php?<?php echo http_build_query(['zeitraum' => $zeit_gruppe, 'typ' => $typ_filter, 'kategorie' => $kat_filter]); ?>"
+                    data-lieferant="<?php echo htmlspecialchars((string)($edit_rechnung['lieferant'] ?: 'Unbekannt')); ?>"
+                    data-betrag="<?php echo number_format((float)($edit_rechnung['brutto_betrag'] ?? 0), 2, ',', ' '); ?>"
+                    data-waehrung="<?php echo htmlspecialchars((string)($edit_rechnung['waehrung'] ?? 'EUR')); ?>"
+                >Löschen</button>
                 <button type="submit" class="btn btn-primary">Speichern</button>
             </div>
         </form>
@@ -323,39 +337,152 @@ require_once __DIR__ . '/includes/header.php';
 <div id="previewModal" class="preview-modal" hidden>
     <div class="preview-backdrop" data-close="1"></div>
     <div class="preview-content">
-        <button type="button" class="preview-close" data-close="1">Schließen</button>
         <div id="previewBody"></div>
     </div>
 </div>
 
-<script>
-document.querySelectorAll('.thumb-btn').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-        const file = this.dataset.file || '';
-        const type = (this.dataset.type || '').toLowerCase();
-        const body = document.getElementById('previewBody');
-        const modal = document.getElementById('previewModal');
-        if (!file || !body || !modal) return;
+<div id="deleteConfirmModal" class="preview-modal" hidden>
+    <div class="preview-backdrop"></div>
+    <div class="preview-content delete-popup">
+        <h3>Rechnung löschen</h3>
+        <p>Möchten Sie diese Rechnung wirklich löschen?</p>
+        <p id="deleteConfirmDetails" class="delete-details"></p>
+        <div class="edit-actions">
+            <button type="button" class="btn btn-outline" id="deleteCancelBtn">Abbrechen</button>
+            <button type="button" class="btn btn-primary" id="deleteConfirmBtn">Löschen</button>
+        </div>
+    </div>
+</div>
 
-        if (type.includes('pdf')) {
-            body.innerHTML = '<object data=\"' + file + '#toolbar=1\" type=\"application/pdf\" class=\"preview-doc\"></object>';
-        } else {
-            body.innerHTML = '<img src=\"' + file + '\" alt=\"Rechnung\" class=\"preview-doc\">';
-        }
-        modal.hidden = false;
-    });
+<script>
+function openPreview(file, type) {
+    const body = document.getElementById('previewBody');
+    const modal = document.getElementById('previewModal');
+    if (!file || !body || !modal) return;
+    if ((type || '').toLowerCase().includes('pdf')) {
+        body.innerHTML = '<object data=\"' + file + '#toolbar=1\" type=\"application/pdf\" class=\"preview-doc\"></object>';
+    } else {
+        body.innerHTML = '<img src=\"' + file + '\" alt=\"Rechnung\" class=\"preview-doc\">';
+    }
+    modal.hidden = false;
+}
+
+function closePreview() {
+    const modal = document.getElementById('previewModal');
+    const body = document.getElementById('previewBody');
+    if (modal && body) {
+        modal.hidden = true;
+        body.innerHTML = '';
+    }
+}
+
+let previewCloseTimer = null;
+
+document.addEventListener('mouseover', function(e) {
+    const btn = e.target.closest('.thumb-btn');
+    if (!btn) return;
+    if (previewCloseTimer) {
+        clearTimeout(previewCloseTimer);
+        previewCloseTimer = null;
+    }
+    openPreview(btn.dataset.file || '', btn.dataset.type || '');
+});
+
+document.addEventListener('mouseout', function(e) {
+    const btn = e.target.closest('.thumb-btn');
+    if (!btn) return;
+    previewCloseTimer = setTimeout(function() {
+        closePreview();
+    }, 120);
+});
+
+document.addEventListener('focusin', function(e) {
+    const btn = e.target.closest('.thumb-btn');
+    if (!btn) return;
+    openPreview(btn.dataset.file || '', btn.dataset.type || '');
+});
+
+document.addEventListener('focusout', function(e) {
+    const btn = e.target.closest('.thumb-btn');
+    if (!btn) return;
+    closePreview();
 });
 
 document.querySelectorAll('[data-close=\"1\"]').forEach(function(el) {
     el.addEventListener('click', function() {
-        const modal = document.getElementById('previewModal');
-        const body = document.getElementById('previewBody');
-        if (modal && body) {
-            modal.hidden = true;
-            body.innerHTML = '';
-        }
+        closePreview();
     });
 });
+
+let pendingDeleteForm = null;
+let pendingDeletePayload = null;
+const deleteConfirmModal = document.getElementById('deleteConfirmModal');
+const deleteConfirmDetails = document.getElementById('deleteConfirmDetails');
+const deleteConfirmBtn = document.getElementById('deleteConfirmBtn');
+const deleteCancelBtn = document.getElementById('deleteCancelBtn');
+
+function openDeleteConfirm(detailsText) {
+    if (!deleteConfirmModal || !deleteConfirmDetails) return;
+    deleteConfirmDetails.textContent = detailsText;
+    deleteConfirmModal.hidden = false;
+}
+
+function closeDeleteConfirm() {
+    if (deleteConfirmModal) deleteConfirmModal.hidden = true;
+    pendingDeleteForm = null;
+    pendingDeletePayload = null;
+}
+
+document.querySelectorAll('.js-delete-form').forEach(function(form) {
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        pendingDeleteForm = form;
+        const name = form.dataset.lieferant || 'Unbekannt';
+        const amount = form.dataset.betrag || '0,00';
+        const currency = form.dataset.waehrung || 'EUR';
+        openDeleteConfirm('Rechnung: ' + name + ' • Betrag: ' + amount + ' ' + currency);
+    });
+});
+
+document.querySelectorAll('.js-delete-edit').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        pendingDeletePayload = {
+            action: this.dataset.action || 'rechnungen.php',
+            id: this.dataset.id || '',
+        };
+        const name = this.dataset.lieferant || 'Unbekannt';
+        const amount = this.dataset.betrag || '0,00';
+        const currency = this.dataset.waehrung || 'EUR';
+        openDeleteConfirm('Rechnung: ' + name + ' • Betrag: ' + amount + ' ' + currency);
+    });
+});
+
+if (deleteCancelBtn) {
+    deleteCancelBtn.addEventListener('click', function() {
+        closeDeleteConfirm();
+    });
+}
+
+if (deleteConfirmBtn) {
+    deleteConfirmBtn.addEventListener('click', function() {
+        if (pendingDeleteForm) {
+            HTMLFormElement.prototype.submit.call(pendingDeleteForm);
+            return;
+        }
+        if (pendingDeletePayload && pendingDeletePayload.id) {
+            const f = document.createElement('form');
+            f.method = 'POST';
+            f.action = pendingDeletePayload.action || 'rechnungen.php';
+            const i = document.createElement('input');
+            i.type = 'hidden';
+            i.name = 'loeschen_id';
+            i.value = pendingDeletePayload.id;
+            f.appendChild(i);
+            document.body.appendChild(f);
+            f.submit();
+        }
+    });
+}
 </script>
 
 <?php require_once __DIR__ . '/includes/footer.php'; ?>

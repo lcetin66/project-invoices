@@ -20,6 +20,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['aktion'])) {
         $stmt = $pdo->prepare('UPDATE kategorien SET aktiv = 0 WHERE id = ?');
         $stmt->execute([$_POST['kat_id']]);
         $erfolg = 'Kategorie wurde deaktiviert.';
+    } elseif ($_POST['aktion'] === 'kat_loeschen') {
+        $kat_id = (int)($_POST['kat_id'] ?? 0);
+        if ($kat_id > 0) {
+            $stmt = $pdo->prepare('SELECT COUNT(*) FROM rechnungen WHERE kategorie_id = ?');
+            $stmt->execute([$kat_id]);
+            $anzahl_rechnungen = (int)$stmt->fetchColumn();
+
+            if ($anzahl_rechnungen > 0) {
+                $fehler = 'Diese Kategorie enthält Rechnungen. Zum Löschen muss die Kategorie zuerst geleert werden.';
+            } else {
+                $stmt = $pdo->prepare('DELETE FROM kategorien WHERE id = ?');
+                $stmt->execute([$kat_id]);
+                $erfolg = 'Kategorie wurde gelöscht.';
+            }
+        }
     } elseif ($_POST['aktion'] === 'rek_kategorie') {
         $stmt = $pdo->prepare('UPDATE rechnungen SET kategorie_id = ?, kategorie_name = ? WHERE id = ?');
         $stmt->execute([$_POST['kat_id'], $_POST['kat_name'], $_POST['rek_id']]);
@@ -199,16 +214,22 @@ if (empty($ki_insights)) {
 require_once __DIR__ . '/includes/header.php';
 ?>
 
+<?php if (isset($erfolg) || isset($fehler)): ?>
+<div class="popup-overlay" id="statusPopup">
+    <div class="popup-card">
+        <h3><?php echo isset($fehler) ? 'Warnung' : 'Erfolg'; ?></h3>
+        <p><?php echo htmlspecialchars($fehler ?? $erfolg); ?></p>
+        <button type="button" class="btn btn-primary" id="popupOkBtn">OK</button>
+    </div>
+</div>
+<?php endif; ?>
+
 <div class="page-admin">
     <div class="admin-layout">
         <!-- Links: Kategorien -->
         <aside class="admin-sidebar">
             <div class="admin-card">
                 <h3>Kategorien verwalten</h3>
-
-                <?php if (isset($erfolg)): ?>
-                    <div class="alert alert-success"><?php echo htmlspecialchars($erfolg); ?></div>
-                <?php endif; ?>
 
                 <form method="POST" class="kat-form">
                     <input type="hidden" name="aktion" value="kat_erstellen">
@@ -268,17 +289,26 @@ require_once __DIR__ . '/includes/header.php';
                         <div class="kat-item">
                             <span class="kat-farbe" style="background:<?php echo htmlspecialchars($kat['farbe']); ?>;"></span>
                             <span class="kat-name"><?php echo htmlspecialchars($kat['name']); ?></span>
-                            <?php if ($kat['id'] > 8): ?>
                             <form method="POST" style="display:inline;" onsubmit="return confirm('Deaktivieren?')">
                                 <input type="hidden" name="aktion" value="kat_deaktivieren">
                                 <input type="hidden" name="kat_id" value="<?php echo $kat['id']; ?>">
                                 <button type="submit" class="btn-icon" title="Deaktivieren">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/>
+                                        <path d="M12 2v10"/>
+                                        <path d="M5.2 5.2a10 10 0 1013.6 0"/>
                                     </svg>
                                 </button>
                             </form>
-                            <?php endif; ?>
+                            <form method="POST" style="display:inline;" onsubmit="return confirm('Kategorie wirklich löschen?')">
+                                <input type="hidden" name="aktion" value="kat_loeschen">
+                                <input type="hidden" name="kat_id" value="<?php echo $kat['id']; ?>">
+                                <button type="submit" class="btn-icon btn-loeschen" title="Löschen">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3,6 5,6 21,6"/>
+                                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                                    </svg>
+                                </button>
+                            </form>
                         </div>
                     <?php endforeach; ?>
                 </div>
@@ -394,72 +424,6 @@ require_once __DIR__ . '/includes/header.php';
                 </ul>
             </div>
 
-            <div class="admin-card">
-                <h3>Alle Rechnungen</h3>
-                <div class="rek-liste">
-                    <?php foreach ($rechnungen as $rek): ?>
-                        <div class="rek-row" data-id="<?php echo $rek['id']; ?>">
-                            <div class="rek-icon">
-                                <?php if (strpos($rek['dateityp'], 'pdf') !== false): ?>
-                                    <object
-                                        data="uploads/<?php echo htmlspecialchars($rek['dateiname']); ?>#page=1&view=FitH"
-                                        type="application/pdf"
-                                        class="rek-thumb pdf-thumb"
-                                    >
-                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#E74C3C" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
-                                    </object>
-                                <?php else: ?>
-                                    <img src="uploads/<?php echo htmlspecialchars($rek['dateiname']); ?>" class="rek-thumb" alt="Rechnung">
-                                <?php endif; ?>
-                            </div>
-                            <div class="rek-info">
-                                <strong><?php echo htmlspecialchars($rek['lieferant'] ?: 'Unbekannt'); ?></strong>
-                                <span class="rek-meta">
-                                    <?php echo date('d.m.Y', strtotime($rek['hochladezeit'])); ?>
-                                    &mdash; <?php echo number_format($rek['brutto_betrag'] ?? 0, 2, ',', ' '); ?> <?php echo htmlspecialchars($rek['waehrung'] ?? 'EUR'); ?>
-                                </span>
-                                <span class="rek-meta">
-                                    OCR: <?php echo (int)($rek['qualitaet_score'] ?? 0); ?>/100
-                                    <?php if (!empty($rek['faelligkeitsdatum'])): ?>
-                                        &mdash; Fällig: <?php echo date('d.m.Y', strtotime($rek['faelligkeitsdatum'])); ?>
-                                    <?php endif; ?>
-                                </span>
-                            </div>
-                            <div class="rek-kategorie">
-                                <select class="kat-select" data-rek-id="<?php echo $rek['id']; ?>">
-                                    <option value="">Keine Kategorie</option>
-                                    <?php foreach ($kategorien as $kat): ?>
-                                        <option value="<?php echo $kat['id']; ?>|<?php echo htmlspecialchars($kat['name']); ?>"
-                                            style="color: <?php echo htmlspecialchars($kat['farbe']); ?>;"
-                                            <?php echo ($rek['kategorie_id'] == $kat['id']) ? 'selected' : ''; ?>>
-                                            ● <?php echo htmlspecialchars($kat['name']); ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div class="rek-actions">
-                                <a href="uploads/<?php echo htmlspecialchars($rek['dateiname']); ?>" target="_blank" class="btn-icon" title="Ansehen">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                                        <circle cx="12" cy="12" r="3"/>
-                                    </svg>
-                                </a>
-                                <button class="btn-icon btn-loeschen" data-rek-id="<?php echo $rek['id']; ?>" title="Loschen">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <polyline points="3,6 5,6 21,6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-
-                    <?php if (empty($rechnungen)): ?>
-                        <div class="empty-state">
-                            <p>Keine Rechnungen vorhanden.</p>
-                        </div>
-                    <?php endif; ?>
-                </div>
-            </div>
         </section>
     </div>
 </div>
@@ -473,6 +437,35 @@ require_once __DIR__ . '/includes/header.php';
 .admin-sidebar { display: flex; flex-direction: column; gap: 16px; }
 .admin-card { background: white; border-radius: 16px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
 .admin-card h3 { margin: 0 0 16px; font-size: 1.1rem; color: var(--text); }
+.admin-sidebar .btn {
+    margin-top: 10px;
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+}
+.admin-sidebar .btn:hover {
+    background: var(--primary-dark);
+    border-color: var(--primary-dark);
+    color: #fff;
+}
+.popup-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+.popup-card {
+    width: min(460px, 92vw);
+    background: #fff;
+    border-radius: 14px;
+    padding: 22px;
+    box-shadow: 0 18px 50px rgba(15, 23, 42, 0.25);
+}
+.popup-card h3 { margin: 0 0 8px; }
+.popup-card p { margin: 0 0 16px; color: var(--text); }
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -501,16 +494,6 @@ require_once __DIR__ . '/includes/header.php';
 .kat-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: var(--bg); }
 .kat-farbe { width: 16px; height: 16px; border-radius: 4px; flex-shrink: 0; }
 .kat-name { flex: 1; font-size: .9rem; }
-.rek-liste { display: flex; flex-direction: column; gap: 8px; }
-.rek-row { display: flex; align-items: center; gap: 16px; padding: 12px 16px; background: white; border-radius: 10px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
-.rek-icon { flex-shrink: 0; color: #6366F1; width: 46px; height: 46px; border-radius: 8px; background: var(--bg); display:flex; align-items:center; justify-content:center; overflow:hidden; }
-.rek-thumb { width: 46px; height: 46px; object-fit: cover; border: 0; }
-.rek-info { flex: 1; min-width: 0; }
-.rek-info strong { display: block; font-size: .95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rek-meta { font-size: .82rem; color: var(--text-light); }
-.rek-kategorie { flex-shrink: 0; }
-.rek-actions { flex-shrink: 0; display: flex; gap: 4px; }
-.kat-select { padding: 6px 12px; border: 2px solid var(--border); border-radius: 8px; font-size: .85rem; font-family: inherit; background: white; cursor: pointer; }
 
 @media (max-width: 900px) {
     .admin-layout { grid-template-columns: 1fr; }
@@ -519,30 +502,14 @@ require_once __DIR__ . '/includes/header.php';
 </style>
 
 <script>
-document.querySelectorAll('.kat-select').forEach(sel => {
-    sel.addEventListener('change', function() {
-        if (!this.value) return;
-        const [id, name] = this.value.split('|');
-        const rekId = this.dataset.rekId;
-        fetch('admin.php', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: 'aktion=rek_kategorie&rek_id=' + rekId + '&kat_id=' + id + '&kat_name=' + encodeURIComponent(name)
-        }).then(() => location.reload());
+const popupOkBtn = document.getElementById('popupOkBtn');
+if (popupOkBtn) {
+    popupOkBtn.addEventListener('click', function() {
+        const popup = document.getElementById('statusPopup');
+        if (popup) popup.remove();
     });
-});
+}
 
-document.querySelectorAll('.btn-loeschen').forEach(btn => {
-    btn.addEventListener('click', function() {
-        if (!confirm('Rechnung wirklich loschen?')) return;
-        const id = this.dataset.rekId;
-        fetch('admin.php', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: 'aktion=rek_loeschen&rek_id=' + id
-        }).then(() => location.reload());
-    });
-});
 </script>
 
 <?php require_once __DIR__ . '/includes/footer.php'; ?>
