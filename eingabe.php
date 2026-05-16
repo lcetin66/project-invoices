@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
     }
 
     $datei_name_lower = strtolower((string)($datei['name'] ?? ''));
-    $gueltige_endungen = ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'];
+    $gueltige_endungen = ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'tif', 'tiff', 'webp', 'heic', 'heif'];
     $endung = pathinfo($datei_name_lower, PATHINFO_EXTENSION);
     $typ_ok = in_array((string)$datei['type'], ALLOWED_TYPES, true);
     $endung_ok = in_array($endung, $gueltige_endungen, true);
@@ -98,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
                 $brutto_api = (float)($data['ergebnis']['brutto_betrag'] ?? 0);
                 $is_bild = (
                     str_starts_with(strtolower((string)($datei['type'] ?? '')), 'image/')
-                    || in_array(strtolower((string)pathinfo((string)($datei['name'] ?? ''), PATHINFO_EXTENSION)), ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'], true)
+                    || in_array(strtolower((string)pathinfo((string)($datei['name'] ?? ''), PATHINFO_EXTENSION)), ['jpg', 'jpeg', 'png', 'gif', 'tif', 'tiff', 'webp', 'heic', 'heif'], true)
                 );
                 $leer_ergebnis = (($lieferant_api === '' || mb_strtolower($lieferant_api) === 'unbekannt') && $brutto_api <= 0.0);
                 if ($leer_ergebnis) {
@@ -248,7 +248,7 @@ require_once __DIR__ . '/includes/header.php';
                     <strong>Datei hier ablegen oder klicken</strong>
                     <span>PDF oder Bild (max. 10 MB)</span>
                 </div>
-                <input type="file" name="rechnung_datei" id="fileInput" class="file-input" accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,image/jpeg,image/png,image/webp,image/heic,image/heif" required>
+                <input type="file" name="rechnung_datei" id="fileInput" class="file-input" accept=".pdf,.jpg,.jpeg,.png,.gif,.tif,.tiff,.webp,.heic,.heif,image/jpeg,image/png,image/gif,image/tiff,image/webp,image/heic,image/heif" required>
             </div>
             <div class="upload-actions">
                 <input type="text" name="beschreibung" id="beschreibung" placeholder="Beschreibung (optional)">

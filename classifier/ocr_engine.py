@@ -116,6 +116,10 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
     mime = "image/jpeg"
     if ext == ".png":
         mime = "image/png"
+    elif ext == ".gif":
+        mime = "image/gif"
+    elif ext in (".tif", ".tiff"):
+        mime = "image/tiff"
     elif ext == ".webp":
         mime = "image/webp"
     elif ext in (".heic", ".heif"):

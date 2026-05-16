@@ -7,6 +7,8 @@ define('ALLOWED_TYPES', [
     'image/jpeg',
     'image/jpg',
     'image/png',
+    'image/gif',
+    'image/tiff',
     'image/webp',
     'image/heic',
     'image/heif',
