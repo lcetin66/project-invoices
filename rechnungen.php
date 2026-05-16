@@ -179,7 +179,13 @@ function render_rechnungs_card_rechnung(array $rechnung, array $kategorien, stri
             title="Vorschau öffnen"
         >
             <?php if ($is_pdf): ?>
-                <span class="thumb-pdf">PDF</span>
+                <object
+                    data="<?php echo htmlspecialchars($file_url); ?>#page=1&view=FitH"
+                    type="application/pdf"
+                    class="rechnung-thumb pdf-thumb"
+                >
+                    <span class="thumb-pdf">PDF</span>
+                </object>
             <?php else: ?>
                 <img src="<?php echo htmlspecialchars($file_url); ?>" class="rechnung-thumb" alt="Rechnung">
             <?php endif; ?>

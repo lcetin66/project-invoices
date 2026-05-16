@@ -20,11 +20,13 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
 
-        // Klick offne Datei-Wahl
+        // Datei-Wahl nur im oberen Drop-Bereich auslösen (nicht auf Form-Controls unten)
         dropZone.addEventListener('click', function(e) {
-            if (e.target !== fileInput && !fileInput.contains(e.target)) {
-                fileInput.click();
-            }
+            const isFormControl = e.target.closest('select, input, button, textarea, a, label');
+            const inDropInner = e.target.closest('.upload-zone-inner');
+            if (isFormControl) return;
+            if (!inDropInner) return;
+            if (e.target !== fileInput && !fileInput.contains(e.target)) fileInput.click();
         });
 
         fileInput.addEventListener('change', function() {

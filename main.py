@@ -27,7 +27,7 @@ def qualitaet_score_berechnen(text: str, ergebnis: dict) -> int:
     return max(0, min(100, int(score)))
 
 
-def process_invoice_file(datei_pfad: str, api_key: str = "", api_provider: str = "openrouter") -> dict:
+def process_invoice_file(datei_pfad: str, api_key: str = "", api_provider: str = "openrouter", api_model: str = "") -> dict:
     text = ""
     lower = datei_pfad.lower()
     if lower.endswith(".pdf"):
@@ -41,7 +41,7 @@ def process_invoice_file(datei_pfad: str, api_key: str = "", api_provider: str =
         except Exception:
             text = ""
 
-    ergebnis = klassifizieren(text, api_key=api_key, datei_pfad=datei_pfad, api_provider=api_provider)
+    ergebnis = klassifizieren(text, api_key=api_key, datei_pfad=datei_pfad, api_provider=api_provider, api_model=api_model)
     qualitaet_score = qualitaet_score_berechnen(text, ergebnis)
     return {
         "ergebnis": ergebnis,

@@ -22,6 +22,54 @@ API_KEY_OPENROUTER = os.getenv("OPENROUTER_API_KEY", "")
 API_KEY_OPENAI = os.getenv("OPENAI_API_KEY", "")
 
 
+def _typ_heuristik_aus_text(text: str) -> str:
+    t = (text or "").lower()
+    ausgang_hits = [
+        r"\brechnung\s+an\b",
+        r"\bkunde\b",
+        r"\bleistungszeitraum\b",
+        r"\bwir\s+berechnen\b",
+        r"\bzahlbar\s+bis\b",
+    ]
+    eingang_hits = [
+        r"\bihr\s+vertrag\b",
+        r"\bzu\s+zahl(?:en|ender)\b",
+        r"\blastschrift\b",
+        r"\babbuchung\b",
+        r"\bkundennummer\b",
+        r"\brechnungsnummer\b",
+    ]
+    a = sum(1 for p in ausgang_hits if re.search(p, t))
+    e = sum(1 for p in eingang_hits if re.search(p, t))
+    return "ausgang" if a > e else "eingang"
+
+
+def _kategorie_nach_produktlogik(ergebnis: dict, text: str = "") -> dict:
+    """
+    Produkt-/Leistungslogik statt Lieferanten-Logik:
+    - nur Inhalte/Positionen der Rechnung bewerten
+    - Lieferantenname NICHT als hartes Kriterium verwenden
+    """
+    kategorie = str(ergebnis.get("kategorie", "") or "Sonstige").strip()
+    brutto = str(ergebnis.get("brutto_betrag", "0") or "0")
+    full_text = (text or "").lower()
+
+    # Wenn KI keine brauchbare Kategorie geliefert hat, aus Produkttext ableiten.
+    if kategorie in ("", "Sonstige"):
+        kw = nach_schluesselwort(full_text)
+        if kw.get("kategorie") and kw.get("kategorie") != "Sonstige":
+            ergebnis["kategorie"] = kw["kategorie"]
+            # Nur fehlende Zahlenfelder ergänzen
+            if brutto in ("", "0", "0.0", "0.00") and str(kw.get("brutto_betrag", "0")) not in ("", "0", "0.0", "0.00"):
+                ergebnis["brutto_betrag"] = kw.get("brutto_betrag", ergebnis.get("brutto_betrag", "0"))
+                ergebnis["netto_betrag"] = kw.get("netto_betrag", ergebnis.get("netto_betrag", "0"))
+                ergebnis["mwst_satz"] = kw.get("mwst_satz", ergebnis.get("mwst_satz", ""))
+                ergebnis["mwst_betrag"] = kw.get("mwst_betrag", ergebnis.get("mwst_betrag", "0"))
+                ergebnis["waehrung"] = kw.get("waehrung", ergebnis.get("waehrung", "EUR"))
+
+    return _standard_response(ergebnis)
+
+
 def text_extrahieren(pdf_pfad: str) -> str:
     """Text aus PDF extrahieren."""
     text = ""
@@ -45,8 +93,12 @@ def bild_text_extrahieren(datei_pfad: str) -> str:
 
 
 def _standard_response(ergebnis: dict) -> dict:
+    typ = str(ergebnis.get("rechnung_typ", "eingang") or "eingang").strip().lower()
+    if typ not in ("eingang", "ausgang"):
+        typ = "eingang"
     return {
         "lieferant": ergebnis.get("lieferant", "Unbekannt"),
+        "rechnung_typ": typ,
         "kategorie": ergebnis.get("kategorie", "Sonstige"),
         "netto_betrag": ergebnis.get("netto_betrag", "0"),
         "mwst_satz": ergebnis.get("mwst_satz", ""),
@@ -56,7 +108,7 @@ def _standard_response(ergebnis: dict) -> dict:
     }
 
 
-def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "openrouter") -> dict:
+def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "openrouter", api_model: str = "") -> dict:
     if not os.path.isfile(datei_pfad):
         return {}
 
@@ -77,6 +129,7 @@ Analysiere das Rechnungsbild und gib die folgenden Felder als JSON zuruck.
 
 Felder:
 - lieferant: Firmenname
+- rechnung_typ: "eingang" oder "ausgang"
 - kategorie: Eine der folgenden Kategorien (nur der Kategoriename):
 {list(STANDARDS_KATEGORIEN.keys())}
 - netto_betrag: Nettobetrag
@@ -84,6 +137,11 @@ Felder:
 - mwst_betrag: MwSt-Betrag
 - brutto_betrag: Bruttobetrag
 - waehrung: Währung
+
+WICHTIG:
+- Kategorisierung nach dem GEKAUFTEN PRODUKT / der LEISTUNG aus den Positionen.
+- Nicht nach Lieferantenname/Marke kategorisieren.
+- Falls mehrere Positionen vorliegen: nach dem Hauptkostenblock entscheiden.
 
 Gib NUR JSON zuruck. Keine Erklarungen.
 """
@@ -95,7 +153,7 @@ Gib NUR JSON zuruck. Keine Erklarungen.
             "Content-Type": "application/json",
         }
         data = {
-            "model": "gpt-4o-mini",
+            "model": api_model or "gpt-4o-mini",
             "messages": [{
                 "role": "user",
                 "content": [
@@ -112,7 +170,7 @@ Gib NUR JSON zuruck. Keine Erklarungen.
             "Content-Type": "application/json",
         }
         data = {
-            "model": "openai/gpt-4o-mini",
+            "model": api_model or "openai/gpt-4o-mini",
             "messages": [{
                 "role": "user",
                 "content": [
@@ -130,18 +188,20 @@ Gib NUR JSON zuruck. Keine Erklarungen.
         raw = response_json["choices"][0]["message"]["content"].strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1].replace("json", "", 1).strip()
-        return _standard_response(json.loads(raw))
+        parsed = _standard_response(json.loads(raw))
+        return _kategorie_nach_produktlogik(parsed, "")
     except Exception:
         return {}
 
 
-def klassifizieren(text: str, api_key: str = "", datei_pfad: str = "", api_provider: str = "openrouter") -> dict:
+def klassifizieren(text: str, api_key: str = "", datei_pfad: str = "", api_provider: str = "openrouter", api_model: str = "") -> dict:
     """KI analysiert die Rechnung und weist Kategorie zu."""
     prompt = f"""
 Analysiere die folgende Rechnung und gib die folgenden Felder als JSON zuruck.
 
 Felder:
 - lieferant: Firmenname
+- rechnung_typ: "eingang" oder "ausgang"
 - kategorie: Eine der folgenden Kategorien (nur der Kategoriename):
 {list(STANDARDS_KATEGORIEN.keys())}
 - netto_betrag: Nettobetrag
@@ -149,6 +209,11 @@ Felder:
 - mwst_betrag: MwSt-Betrag
 - brutto_betrag: Bruttobetrag
 - waehrung: Währung
+
+WICHTIG:
+- Kategorisierung nach dem GEKAUFTEN PRODUKT / der LEISTUNG (Positionszeilen).
+- Nicht nach Lieferantenname/Marke kategorisieren.
+- Falls mehrere Positionen vorhanden sind, entscheide nach dem größten/zentralen Kostenblock.
 
 Gib NUR JSON zuruck. Keine Erklarungen.
 
@@ -168,9 +233,9 @@ Rechnungstext:
         return nach_schluesselwort(text)
 
     if not (text or "").strip() and datei_pfad:
-        vision_result = _vision_klassifizieren(datei_pfad, verwendeter_key, provider)
+        vision_result = _vision_klassifizieren(datei_pfad, verwendeter_key, provider, api_model)
         if vision_result:
-            return vision_result
+            return _kategorie_nach_produktlogik(vision_result, text)
 
     if provider == "openai":
         url = "https://api.openai.com/v1/chat/completions"
@@ -179,7 +244,7 @@ Rechnungstext:
             "Content-Type": "application/json",
         }
         data = {
-            "model": "gpt-4o-mini",
+            "model": api_model or "gpt-4o-mini",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0,
         }
@@ -190,7 +255,7 @@ Rechnungstext:
             "Content-Type": "application/json",
         }
         data = {
-            "model": "openai/gpt-4o-mini",
+            "model": api_model or "openai/gpt-4o-mini",
             "messages": [{"role": "user", "content": prompt}],
         }
 
@@ -212,8 +277,10 @@ Rechnungstext:
         raw = raw.split("```")[1].replace("json", "", 1).strip()
 
     try:
-        ergebnis = json.loads(raw)
-        return _standard_response(ergebnis)
+        ergebnis = _standard_response(json.loads(raw))
+        if not ergebnis.get("rechnung_typ"):
+            ergebnis["rechnung_typ"] = _typ_heuristik_aus_text(text)
+        return _kategorie_nach_produktlogik(ergebnis, text)
     except json.JSONDecodeError:
         return nach_schluesselwort(text)
 
@@ -285,6 +352,7 @@ def nach_schluesselwort(text: str) -> dict:
 
     return {
         "lieferant": lieferant,
+        "rechnung_typ": _typ_heuristik_aus_text(text),
         "kategorie": gefundene_kategorie,
         "netto_betrag": f"{netto:.2f}" if netto else "0",
         "mwst_satz": mwst_satz,

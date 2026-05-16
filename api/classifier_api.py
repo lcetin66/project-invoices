@@ -44,9 +44,10 @@ def klassifiziere_rechnung():
     # Optional: API-Key aus dem Web-Frontend
     api_key = (request.form.get('api_key') or "").strip()
     api_provider = (request.form.get('api_provider') or "openrouter").strip().lower()
+    api_model = (request.form.get('api_model') or "").strip()
 
     # Gemeinsamer Motor aus main.py (CLI + API)
-    out = process_invoice_file(datei_pfad, api_key=api_key, api_provider=api_provider)
+    out = process_invoice_file(datei_pfad, api_key=api_key, api_provider=api_provider, api_model=api_model)
 
     return jsonify({
         'erfolgreich': True,
@@ -90,6 +91,7 @@ def business_insights():
     stats = payload.get('stats', {})
     api_key = (payload.get('api_key') or "").strip()
     api_provider = (payload.get('api_provider') or "openrouter").strip().lower()
+    api_model = (payload.get('api_model') or "").strip()
 
     if not stats:
         return jsonify({
@@ -135,7 +137,7 @@ Kennzahlen:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "gpt-4o-mini",
+                    "model": api_model or "gpt-4o-mini",
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0,
                 },
@@ -149,7 +151,7 @@ Kennzahlen:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "openai/gpt-4o-mini",
+                    "model": api_model or "openai/gpt-4o-mini",
                     "messages": [{"role": "user", "content": prompt}],
                 },
                 timeout=20,

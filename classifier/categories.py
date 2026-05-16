@@ -4,12 +4,12 @@ STANDARDS_KATEGORIEN = {
     "Büromaterial": {
         "beschreibung": "Papier, Stifte, Mappen und andere Bürobedarfsartikel",
         "farbe": "#E67E22",
-        "schluesselwoerter": ["buro", "papier", "stift", "mappe", "heft", "schreibtisch", "schreibwaren", "büro", "schreibwaren"],
+        "schluesselwoerter": ["buro", "papier", "stift", "mappe", "heft", "schreibtisch", "schreibwaren", "büro", "ordner", "toner", "druckerpapier", "bürobedarf", "arbeitsmittel", "küchengerät", "airfryer"],
     },
     "Software & Hardware": {
         "beschreibung": "Computer, Software-Lizenzen, Technik",
         "farbe": "#9B59B6",
-        "schluesselwoerter": ["software", "hardware", "computer", "laptop", "tablet", "drucker", "monitor", "lizen", "software", "technik"],
+        "schluesselwoerter": ["software", "hardware", "computer", "laptop", "tablet", "drucker", "monitor", "lizen", "technik", "saas", "cloud", "abo", "lizenz", "keyboard", "maus", "headset"],
     },
     "Transport": {
         "beschreibung": "Taxi, Bus, Zug, Flugtickets",
@@ -29,7 +29,7 @@ STANDARDS_KATEGORIEN = {
     "Telekommunikation": {
         "beschreibung": "Telefon, Mobilfunk, Internet, Telekommunikationsdienste",
         "farbe": "#0EA5A6",
-        "schluesselwoerter": ["telekom", "vodafone", "telefon", "mobilfunk", "internet", "dsl", "fiber", "hotspot", "sim", "roaming"],
+        "schluesselwoerter": ["telefon", "mobilfunk", "internet", "dsl", "fiber", "hotspot", "sim", "roaming", "vertrag", "grundgebühr", "anschluss", "rufnummer", "datenvolumen"],
     },
     "Beratung": {
         "beschreibung": "Rechtsanwalt, Steuerberater, Berater",

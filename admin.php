@@ -5,6 +5,88 @@ session_pruefen();
 
 $page_titel = 'Verwaltung - RechnungsManager';
 
+function ai_optionen(): array {
+    return [
+        'openai' => ['label' => 'OpenAI (direkt)', 'provider' => 'openai', 'model' => 'gpt-4o-mini'],
+        'openrouter_openai' => ['label' => 'OpenAI über OpenRouter', 'provider' => 'openrouter', 'model' => 'openai/gpt-4o-mini'],
+        'deepseek' => ['label' => 'DeepSeek', 'provider' => 'openrouter', 'model' => 'deepseek/deepseek-chat-v3-0324'],
+        'anthropic' => ['label' => 'Anthropic Claude', 'provider' => 'openrouter', 'model' => 'anthropic/claude-3.5-sonnet'],
+        'google' => ['label' => 'Google Gemini', 'provider' => 'openrouter', 'model' => 'google/gemini-2.0-flash-001'],
+        'mistral' => ['label' => 'Mistral', 'provider' => 'openrouter', 'model' => 'mistralai/mistral-small-3.2-24b-instruct'],
+        'meta' => ['label' => 'Meta Llama', 'provider' => 'openrouter', 'model' => 'meta-llama/llama-3.1-70b-instruct'],
+        'xai' => ['label' => 'xAI Grok', 'provider' => 'openrouter', 'model' => 'x-ai/grok-2-1212'],
+        'copilot' => ['label' => 'GitHub Copilot (kompatibel)', 'provider' => 'openai', 'model' => 'gpt-4o-mini'],
+    ];
+}
+
+function maske_api_key_kisa(string $key): string {
+    $key = trim($key);
+    if ($key === '') {
+        return 'Nicht gesetzt';
+    }
+    if (strlen($key) <= 10) {
+        return substr($key, 0, 2) . '***';
+    }
+    return substr($key, 0, 6) . '...' . substr($key, -4);
+}
+
+function teste_api_key(string $provider, string $model, string $api_key): array {
+    $provider = strtolower(trim($provider));
+    $api_key = trim($api_key);
+    if ($api_key === '') {
+        return ['ok' => false, 'message' => 'API-Key fehlt.'];
+    }
+
+    if ($provider === 'openai') {
+        $url = 'https://api.openai.com/v1/chat/completions';
+        $payload = [
+            'model' => $model !== '' ? $model : 'gpt-4o-mini',
+            'messages' => [['role' => 'user', 'content' => 'ok']],
+            'max_tokens' => 1,
+            'temperature' => 0,
+        ];
+    } else {
+        $url = 'https://openrouter.ai/api/v1/chat/completions';
+        $payload = [
+            'model' => $model !== '' ? $model : 'openai/gpt-4o-mini',
+            'messages' => [['role' => 'user', 'content' => 'ok']],
+            'max_tokens' => 1,
+            'temperature' => 0,
+        ];
+    }
+
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 12);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'Authorization: Bearer ' . $api_key,
+    ]);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    $response = curl_exec($ch);
+    $http_code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_err = curl_error($ch);
+    curl_close($ch);
+
+    if ($curl_err) {
+        return ['ok' => false, 'message' => 'API-Test fehlgeschlagen (Netzwerk).'];
+    }
+    if ($http_code >= 200 && $http_code < 300) {
+        return ['ok' => true, 'message' => 'API-Key ist gültig.'];
+    }
+
+    $msg = 'API-Key ist ungültig oder nicht freigeschaltet.';
+    if ($response) {
+        $decoded = json_decode($response, true);
+        if (is_array($decoded) && isset($decoded['error'])) {
+            $msg = 'API-Test: ' . (is_string($decoded['error']) ? $decoded['error'] : 'Fehlerantwort erhalten.');
+        }
+    }
+    return ['ok' => false, 'message' => $msg];
+}
+
 // Neue Kategorie erstellen
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['aktion'])) {
     if ($_POST['aktion'] === 'kat_erstellen') {
@@ -52,14 +134,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['aktion'])) {
         $erfolg = 'Rechnung wurde geloscht.';
     } elseif ($_POST['aktion'] === 'api_key_speichern') {
         $api_key = trim($_POST['ai_api_key'] ?? '');
-        $api_provider = trim($_POST['ai_provider'] ?? 'openrouter');
-        if (!in_array($api_provider, ['openrouter', 'openai'], true)) {
-            $api_provider = 'openrouter';
+        $ai_service = trim($_POST['ai_service'] ?? 'openrouter_openai');
+        $optionen = ai_optionen();
+        if (!isset($optionen[$ai_service])) {
+            $ai_service = 'openrouter_openai';
         }
+        $api_provider = $optionen[$ai_service]['provider'];
+        $ai_model = $optionen[$ai_service]['model'];
+        app_setting_speichern('ai_service', $ai_service);
         app_setting_speichern('ai_provider', $api_provider);
+        app_setting_speichern('ai_model', $ai_model);
         app_setting_speichern('ai_api_key', $api_key);
         app_setting_speichern('openrouter_api_key', $api_key);
-        $erfolg = 'API-Einstellungen wurden gespeichert.';
+        $test = teste_api_key($api_provider, $ai_model, $api_key);
+        if ($test['ok']) {
+            $erfolg = 'API-Einstellungen gespeichert. ' . $test['message'];
+        } else {
+            $fehler = 'API-Einstellungen gespeichert. ' . $test['message'];
+        }
     } elseif ($_POST['aktion'] === 'budget_speichern') {
         $kategorie_id = (int)($_POST['budget_kategorie_id'] ?? 0);
         $monatsbudget = (float)($_POST['monatsbudget'] ?? 0);
@@ -77,9 +169,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['aktion'])) {
 
 $gespeicherter_api_key = app_setting_holen('ai_api_key', app_setting_holen('openrouter_api_key', ''));
 $api_provider = app_setting_holen('ai_provider', 'openrouter');
-$maskierter_api_key = $gespeicherter_api_key !== ''
-    ? substr($gespeicherter_api_key, 0, 10) . str_repeat('*', max(strlen($gespeicherter_api_key) - 14, 4)) . substr($gespeicherter_api_key, -4)
-    : 'Nicht gesetzt';
+$ai_service = app_setting_holen('ai_service', 'openrouter_openai');
+$ai_model = app_setting_holen('ai_model', 'openai/gpt-4o-mini');
+$ai_optionen = ai_optionen();
+$maskierter_api_key = maske_api_key_kisa($gespeicherter_api_key);
 
 $kategorien = $pdo->query('SELECT * FROM kategorien ORDER BY name')->fetchAll();
 $rechnungen = $pdo->query('SELECT r.*, k.farbe as kat_farbe FROM rechnungen r LEFT JOIN kategorien k ON r.kategorie_id = k.id ORDER BY r.hochladezeit DESC')->fetchAll();
@@ -197,6 +290,7 @@ curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
     'stats' => $insight_payload,
     'api_key' => $gespeicherter_api_key,
     'api_provider' => $api_provider,
+    'api_model' => $ai_model,
 ]));
 curl_setopt($ch, CURLOPT_TIMEOUT, 10);
 $ki_response = curl_exec($ch);
@@ -278,25 +372,6 @@ require_once __DIR__ . '/includes/header.php';
                         <input type="number" id="monatsbudget" name="monatsbudget" min="0" step="0.01" placeholder="z.B. 1500">
                     </div>
                     <button type="submit" class="btn btn-outline btn-full">Budget speichern</button>
-                </form>
-
-                <hr style="margin: 16px 0; border: 0; border-top: 1px solid var(--border);">
-                <h3 style="margin-top:0">KI API-Schlüssel</h3>
-                <div class="api-key-hint">Aktuell: <?php echo htmlspecialchars($maskierter_api_key); ?></div>
-                <form method="POST" class="kat-form">
-                    <input type="hidden" name="aktion" value="api_key_speichern">
-                    <div class="form-group">
-                        <label for="ai_provider">API-Anbieter</label>
-                        <select id="ai_provider" name="ai_provider">
-                            <option value="openrouter" <?php echo $api_provider === 'openrouter' ? 'selected' : ''; ?>>OpenRouter</option>
-                            <option value="openai" <?php echo $api_provider === 'openai' ? 'selected' : ''; ?>>OpenAI</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="ai_api_key">API-Key</label>
-                        <input type="password" id="ai_api_key" name="ai_api_key" placeholder="sk-... / sk-or-v1-..." autocomplete="off">
-                    </div>
-                    <button type="submit" class="btn btn-outline btn-full">API-Key speichern</button>
                 </form>
 
                 <div class="kat-liste">
@@ -407,6 +482,34 @@ require_once __DIR__ . '/includes/header.php';
             </div>
 
             <div class="admin-card ai-card">
+                <h3>KI API-Schlüssel</h3>
+                <div class="api-key-hint">Aktuell: <?php echo htmlspecialchars($maskierter_api_key); ?></div>
+                <?php if (isset($erfolg) && strpos($erfolg, 'API-Einstellungen') !== false): ?>
+                    <div class="api-key-status ok">Status: gültig</div>
+                <?php elseif (isset($fehler) && strpos($fehler, 'API-Einstellungen') !== false): ?>
+                    <div class="api-key-status fail">Status: ungültig</div>
+                <?php endif; ?>
+                <form method="POST" class="kat-form">
+                    <input type="hidden" name="aktion" value="api_key_speichern">
+                    <div class="form-group">
+                        <label for="ai_service">AI-Service</label>
+                        <select id="ai_service" name="ai_service">
+                            <?php foreach ($ai_optionen as $key => $opt): ?>
+                                <option value="<?php echo htmlspecialchars($key); ?>" <?php echo $ai_service === $key ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($opt['label']); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="ai_api_key">API-Key</label>
+                        <input type="password" id="ai_api_key" name="ai_api_key" placeholder="sk-... / sk-or-v1-..." autocomplete="off">
+                    </div>
+                    <button type="submit" class="btn btn-outline">API-Einstellungen speichern</button>
+                </form>
+            </div>
+
+            <div class="admin-card ai-card">
                 <h3>Budget-Warnungen (aktueller Monat)</h3>
                 <?php if (empty($budget_alerts)): ?>
                     <div class="stats-sub">Noch keine Budgets gesetzt.</div>
@@ -503,6 +606,9 @@ require_once __DIR__ . '/includes/header.php';
 .ai-meta { font-size: .78rem; color: var(--text-light); margin-bottom: 10px; letter-spacing: .3px; }
 .ai-list { margin: 0; padding-left: 18px; color: #334155; display: grid; gap: 8px; }
 .api-key-hint { font-size: .82rem; color: var(--text-light); margin-bottom: 10px; }
+.api-key-status { font-size: .82rem; margin: -4px 0 10px; font-weight: 600; }
+.api-key-status.ok { color: #166534; }
+.api-key-status.fail { color: #b91c1c; }
 .kat-form { margin-bottom: 20px; }
 .color-picker { width: 100%; height: 40px; border: 2px solid var(--border); border-radius: 8px; cursor: pointer; }
 .kat-liste { display: flex; flex-direction: column; gap: 8px; }

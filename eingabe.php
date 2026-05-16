@@ -42,13 +42,13 @@ function rechnungen_gruppieren(array $rechnungen, string $zeit_gruppe): array {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
     $datei = $_FILES['rechnung_datei'];
     $beschreibung = trim($_POST['beschreibung'] ?? '');
-    $rechnung_typ = $_POST['rechnung_typ'] ?? 'eingang';
+    $rechnung_typ = $_POST['rechnung_typ'] ?? 'auto';
     $faelligkeitsdatum = trim($_POST['faelligkeitsdatum'] ?? '');
     if ($faelligkeitsdatum === '') {
         $faelligkeitsdatum = null;
     }
-    if (!in_array($rechnung_typ, ['eingang', 'ausgang'], true)) {
-        $rechnung_typ = 'eingang';
+    if (!in_array($rechnung_typ, ['auto', 'eingang', 'ausgang'], true)) {
+        $rechnung_typ = 'auto';
     }
 
     $datei_name_lower = strtolower((string)($datei['name'] ?? ''));
@@ -67,6 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
         $api_url = CLASSIFIER_API;
         $gespeicherter_api_key = app_setting_holen('ai_api_key', app_setting_holen('openrouter_api_key', ''));
         $api_provider = app_setting_holen('ai_provider', 'openrouter');
+        $ai_model = app_setting_holen('ai_model', 'openai/gpt-4o-mini');
         $ch = curl_init();
 
         $curl_file = new CURLFile($datei['tmp_name'], $datei['type'], $datei['name']);
@@ -77,6 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
             'datei' => $curl_file,
             'api_key' => $gespeicherter_api_key,
             'api_provider' => $api_provider,
+            'api_model' => $ai_model,
         ]);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 60);
@@ -106,6 +108,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
                         $fehler[] = 'Rechnungsdaten konnten nicht zuverlässig extrahiert werden. Bitte Dateiqualität prüfen.';
                     }
                 } else {
+                $erkannter_typ = (string)($data['ergebnis']['rechnung_typ'] ?? 'eingang');
+                if (!in_array($erkannter_typ, ['eingang', 'ausgang'], true)) {
+                    $erkannter_typ = 'eingang';
+                }
+                $finaler_typ = $rechnung_typ === 'auto' ? $erkannter_typ : $rechnung_typ;
+
                 $stmt = $pdo->prepare(
                     'INSERT INTO rechnungen (dateiname, dateipfad, dateityp, rechnung_typ, beschreibung, lieferant, kategorie_name, netto_betrag, mwst_satz, mwst_betrag, brutto_betrag, waehrung, qualitaet_score, faelligkeitsdatum)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
@@ -114,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
                     $data['datei_name'],
                     'uploads/' . $data['datei_name'],
                     $datei['type'],
-                    $rechnung_typ,
+                    $finaler_typ,
                     $beschreibung,
                     $data['ergebnis']['lieferant'],
                     $data['ergebnis']['kategorie'],
@@ -128,6 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
                 ]);
 
                 $ergebnis = $data['ergebnis'];
+                $ergebnis['rechnung_typ'] = $finaler_typ;
                 $ergebnis['datei_name'] = $data['datei_name'];
                 }
             } else {
@@ -245,6 +254,7 @@ require_once __DIR__ . '/includes/header.php';
                 <input type="text" name="beschreibung" id="beschreibung" placeholder="Beschreibung (optional)">
                 <input type="date" name="faelligkeitsdatum" id="faelligkeitsdatum" class="filter-select" title="Fälligkeitsdatum">
                 <select name="rechnung_typ" id="rechnung_typ" class="filter-select">
+                    <option value="auto" selected>Automatisch erkennen</option>
                     <option value="eingang">Eingangsrechnung (erhalten)</option>
                     <option value="ausgang">Ausgangsrechnung (gestellt)</option>
                 </select>
@@ -270,6 +280,7 @@ require_once __DIR__ . '/includes/header.php';
                 <div class="ergebnis-item"><span class="ergebnis-label">MwSt.-Betrag</span><span class="ergebnis-value"><?php echo htmlspecialchars($ergebnis['mwst_betrag'] ?? '0'); ?> <?php echo htmlspecialchars($ergebnis['waehrung'] ?? 'EUR'); ?></span></div>
                 <div class="ergebnis-item"><span class="ergebnis-label">Bruttobetrag</span><span class="ergebnis-value highlight"><?php echo htmlspecialchars($ergebnis['brutto_betrag'] ?? '0'); ?> <?php echo htmlspecialchars($ergebnis['waehrung'] ?? 'EUR'); ?></span></div>
                 <div class="ergebnis-item"><span class="ergebnis-label">Kategorie</span><span class="ergebnis-value"><?php echo htmlspecialchars($ergebnis['kategorie']); ?></span></div>
+                <div class="ergebnis-item"><span class="ergebnis-label">Rechnungstyp</span><span class="ergebnis-value"><?php echo htmlspecialchars(($ergebnis['rechnung_typ'] ?? 'eingang') === 'ausgang' ? 'Ausgang' : 'Eingang'); ?></span></div>
             </div>
             <div class="btn-row"><a href="rechnungen.php" class="btn btn-outline">Zu Rechnungen</a></div>
         </div>
