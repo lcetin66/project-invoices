@@ -51,9 +51,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['aktion'])) {
         $stmt->execute([$_POST['rek_id']]);
         $erfolg = 'Rechnung wurde geloscht.';
     } elseif ($_POST['aktion'] === 'api_key_speichern') {
-        $api_key = trim($_POST['openrouter_api_key'] ?? '');
+        $api_key = trim($_POST['ai_api_key'] ?? '');
+        $api_provider = trim($_POST['ai_provider'] ?? 'openrouter');
+        if (!in_array($api_provider, ['openrouter', 'openai'], true)) {
+            $api_provider = 'openrouter';
+        }
+        app_setting_speichern('ai_provider', $api_provider);
+        app_setting_speichern('ai_api_key', $api_key);
         app_setting_speichern('openrouter_api_key', $api_key);
-        $erfolg = 'API-Key wurde gespeichert.';
+        $erfolg = 'API-Einstellungen wurden gespeichert.';
     } elseif ($_POST['aktion'] === 'budget_speichern') {
         $kategorie_id = (int)($_POST['budget_kategorie_id'] ?? 0);
         $monatsbudget = (float)($_POST['monatsbudget'] ?? 0);
@@ -69,7 +75,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['aktion'])) {
     }
 }
 
-$gespeicherter_api_key = app_setting_holen('openrouter_api_key', '');
+$gespeicherter_api_key = app_setting_holen('ai_api_key', app_setting_holen('openrouter_api_key', ''));
+$api_provider = app_setting_holen('ai_provider', 'openrouter');
 $maskierter_api_key = $gespeicherter_api_key !== ''
     ? substr($gespeicherter_api_key, 0, 10) . str_repeat('*', max(strlen($gespeicherter_api_key) - 14, 4)) . substr($gespeicherter_api_key, -4)
     : 'Nicht gesetzt';
@@ -189,6 +196,7 @@ curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
 curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
     'stats' => $insight_payload,
     'api_key' => $gespeicherter_api_key,
+    'api_provider' => $api_provider,
 ]));
 curl_setopt($ch, CURLOPT_TIMEOUT, 10);
 $ki_response = curl_exec($ch);
@@ -278,8 +286,15 @@ require_once __DIR__ . '/includes/header.php';
                 <form method="POST" class="kat-form">
                     <input type="hidden" name="aktion" value="api_key_speichern">
                     <div class="form-group">
-                        <label for="openrouter_api_key">OpenRouter API-Key</label>
-                        <input type="password" id="openrouter_api_key" name="openrouter_api_key" placeholder="sk-or-v1-..." autocomplete="off">
+                        <label for="ai_provider">API-Anbieter</label>
+                        <select id="ai_provider" name="ai_provider">
+                            <option value="openrouter" <?php echo $api_provider === 'openrouter' ? 'selected' : ''; ?>>OpenRouter</option>
+                            <option value="openai" <?php echo $api_provider === 'openai' ? 'selected' : ''; ?>>OpenAI</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="ai_api_key">API-Key</label>
+                        <input type="password" id="ai_api_key" name="ai_api_key" placeholder="sk-... / sk-or-v1-..." autocomplete="off">
                     </div>
                     <button type="submit" class="btn btn-outline btn-full">API-Key speichern</button>
                 </form>

@@ -51,15 +51,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
         $rechnung_typ = 'eingang';
     }
 
+    $datei_name_lower = strtolower((string)($datei['name'] ?? ''));
+    $gueltige_endungen = ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'];
+    $endung = pathinfo($datei_name_lower, PATHINFO_EXTENSION);
+    $typ_ok = in_array((string)$datei['type'], ALLOWED_TYPES, true);
+    $endung_ok = in_array($endung, $gueltige_endungen, true);
+
     if ($datei['error'] !== UPLOAD_ERR_OK) {
         $fehler[] = 'Fehler beim Hochladen der Datei.';
-    } elseif (!in_array($datei['type'], ALLOWED_TYPES)) {
+    } elseif (!$typ_ok && !$endung_ok) {
         $fehler[] = 'Nur PDF- und Bilddateien sind erlaubt.';
     } elseif ($datei['size'] > MAX_FILE_SIZE) {
         $fehler[] = 'Datei ist zu gro&szlig; (max. 10 MB).';
     } else {
         $api_url = CLASSIFIER_API;
-        $gespeicherter_api_key = app_setting_holen('openrouter_api_key', '');
+        $gespeicherter_api_key = app_setting_holen('ai_api_key', app_setting_holen('openrouter_api_key', ''));
+        $api_provider = app_setting_holen('ai_provider', 'openrouter');
         $ch = curl_init();
 
         $curl_file = new CURLFile($datei['tmp_name'], $datei['type'], $datei['name']);
@@ -69,6 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
         curl_setopt($ch, CURLOPT_POSTFIELDS, [
             'datei' => $curl_file,
             'api_key' => $gespeicherter_api_key,
+            'api_provider' => $api_provider,
         ]);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 60);
@@ -84,6 +92,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
         } elseif ($http_code === 200 && $antwort) {
             $data = json_decode($antwort, true);
             if ($data && $data['erfolgreich']) {
+                $lieferant_api = trim((string)($data['ergebnis']['lieferant'] ?? ''));
+                $brutto_api = (float)($data['ergebnis']['brutto_betrag'] ?? 0);
+                $is_bild = (
+                    str_starts_with(strtolower((string)($datei['type'] ?? '')), 'image/')
+                    || in_array(strtolower((string)pathinfo((string)($datei['name'] ?? ''), PATHINFO_EXTENSION)), ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'], true)
+                );
+                $leer_ergebnis = (($lieferant_api === '' || mb_strtolower($lieferant_api) === 'unbekannt') && $brutto_api <= 0.0);
+                if ($leer_ergebnis) {
+                    if ($is_bild) {
+                        $fehler[] = 'Bildrechnung konnte nicht gelesen werden. Bitte OpenRouter API-Key in Verwaltung hinterlegen oder ein klareres Bild/PDF hochladen.';
+                    } else {
+                        $fehler[] = 'Rechnungsdaten konnten nicht zuverlässig extrahiert werden. Bitte Dateiqualität prüfen.';
+                    }
+                } else {
                 $stmt = $pdo->prepare(
                     'INSERT INTO rechnungen (dateiname, dateipfad, dateityp, rechnung_typ, beschreibung, lieferant, kategorie_name, netto_betrag, mwst_satz, mwst_betrag, brutto_betrag, waehrung, qualitaet_score, faelligkeitsdatum)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
@@ -107,6 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
 
                 $ergebnis = $data['ergebnis'];
                 $ergebnis['datei_name'] = $data['datei_name'];
+                }
             } else {
                 $fehler[] = 'Klassifizierung fehlgeschlagen.';
             }
@@ -216,7 +239,7 @@ require_once __DIR__ . '/includes/header.php';
                     <strong>Datei hier ablegen oder klicken</strong>
                     <span>PDF oder Bild (max. 10 MB)</span>
                 </div>
-                <input type="file" name="rechnung_datei" id="fileInput" class="file-input" accept=".pdf,image/jpeg,image/png,image/webp" required>
+                <input type="file" name="rechnung_datei" id="fileInput" class="file-input" accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,image/jpeg,image/png,image/webp,image/heic,image/heif" required>
             </div>
             <div class="upload-actions">
                 <input type="text" name="beschreibung" id="beschreibung" placeholder="Beschreibung (optional)">
@@ -248,18 +271,10 @@ require_once __DIR__ . '/includes/header.php';
                 <div class="ergebnis-item"><span class="ergebnis-label">Bruttobetrag</span><span class="ergebnis-value highlight"><?php echo htmlspecialchars($ergebnis['brutto_betrag'] ?? '0'); ?> <?php echo htmlspecialchars($ergebnis['waehrung'] ?? 'EUR'); ?></span></div>
                 <div class="ergebnis-item"><span class="ergebnis-label">Kategorie</span><span class="ergebnis-value"><?php echo htmlspecialchars($ergebnis['kategorie']); ?></span></div>
             </div>
-            <div class="btn-row"><a href="admin.php" class="btn btn-outline">Zur Verwaltung</a></div>
+            <div class="btn-row"><a href="rechnungen.php" class="btn btn-outline">Zu Rechnungen</a></div>
         </div>
     </section>
     <?php endif; ?>
-
-    <section class="rechnungen-section">
-        <div class="section-header">
-            <h2>Rechnungen</h2>
-            <p>Alle Rechnungen wurden in die eigene Seite verschoben.</p>
-            <a href="rechnungen.php" class="btn btn-outline">Zu Rechnungen</a>
-        </div>
-    </section>
 </div>
 
 <?php require_once __DIR__ . '/includes/footer.php'; ?>

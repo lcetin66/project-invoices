@@ -146,6 +146,15 @@ if ($edit_id > 0) {
     $stmt->execute([$edit_id]);
     $edit_rechnung = $stmt->fetch();
 }
+$edit_file_url = '';
+$edit_is_pdf = false;
+if ($edit_rechnung) {
+    $edit_raw_name = (string)($edit_rechnung['dateiname'] ?? '');
+    $edit_fallback_name = basename((string)($edit_rechnung['dateipfad'] ?? ''));
+    $edit_safe_name = $edit_raw_name !== '' ? basename($edit_raw_name) : $edit_fallback_name;
+    $edit_file_url = 'uploads/' . rawurlencode($edit_safe_name);
+    $edit_is_pdf = stripos((string)($edit_rechnung['dateityp'] ?? ''), 'pdf') !== false || preg_match('/\\.pdf$/i', $edit_safe_name);
+}
 
 function render_rechnungs_card_rechnung(array $rechnung, array $kategorien, string $zeit_gruppe, string $typ_filter, string $kat_filter): void {
     $kat_farbe = '';
@@ -155,19 +164,24 @@ function render_rechnungs_card_rechnung(array $rechnung, array $kategorien, stri
             break;
         }
     }
+    $raw_name = (string)($rechnung['dateiname'] ?? '');
+    $fallback_name = basename((string)($rechnung['dateipfad'] ?? ''));
+    $safe_name = $raw_name !== '' ? basename($raw_name) : $fallback_name;
+    $file_url = 'uploads/' . rawurlencode($safe_name);
+    $is_pdf = stripos((string)($rechnung['dateityp'] ?? ''), 'pdf') !== false || preg_match('/\\.pdf$/i', $safe_name);
     ?>
     <div class="rechnung-row" data-kategorie="<?php echo htmlspecialchars($rechnung['kategorie_name'] ?? ''); ?>">
         <button
             type="button"
             class="thumb-btn"
-            data-file="uploads/<?php echo htmlspecialchars($rechnung['dateiname']); ?>"
+            data-file="<?php echo htmlspecialchars($file_url); ?>"
             data-type="<?php echo htmlspecialchars($rechnung['dateityp'] ?? ''); ?>"
             title="Vorschau öffnen"
         >
-            <?php if (strpos($rechnung['dateityp'], 'pdf') !== false): ?>
+            <?php if ($is_pdf): ?>
                 <span class="thumb-pdf">PDF</span>
             <?php else: ?>
-                <img src="uploads/<?php echo htmlspecialchars($rechnung['dateiname']); ?>" class="rechnung-thumb" alt="Rechnung">
+                <img src="<?php echo htmlspecialchars($file_url); ?>" class="rechnung-thumb" alt="Rechnung">
             <?php endif; ?>
         </button>
         <div class="row-main">
@@ -184,7 +198,7 @@ function render_rechnungs_card_rechnung(array $rechnung, array $kategorien, stri
             <?php endif; ?>
         </div>
         <div class="row-actions">
-            <a href="uploads/<?php echo htmlspecialchars($rechnung['dateiname']); ?>" target="_blank" class="action-square action-view" title="Ansehen" aria-label="Ansehen">
+            <a href="<?php echo htmlspecialchars($file_url); ?>" target="_blank" class="action-square action-view" title="Ansehen" aria-label="Ansehen">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                     <circle cx="12" cy="12" r="3"/>
@@ -225,10 +239,10 @@ require_once __DIR__ . '/includes/header.php';
     <p>Hier können Sie die Rechnung korrigieren: Kategorie, Beträge, Lieferant, Fälligkeit und Kommentar.</p>
     <div class="edit-layout">
         <div class="edit-preview">
-            <?php if (strpos((string)$edit_rechnung['dateityp'], 'pdf') !== false): ?>
-                <object data="uploads/<?php echo htmlspecialchars($edit_rechnung['dateiname']); ?>#page=1&view=FitH" type="application/pdf" class="edit-doc"></object>
+            <?php if ($edit_is_pdf): ?>
+                <object data="<?php echo htmlspecialchars($edit_file_url); ?>#page=1&view=FitH" type="application/pdf" class="edit-doc"></object>
             <?php else: ?>
-                <img src="uploads/<?php echo htmlspecialchars($edit_rechnung['dateiname']); ?>" class="edit-doc" alt="Rechnung">
+                <img src="<?php echo htmlspecialchars($edit_file_url); ?>" class="edit-doc" alt="Rechnung">
             <?php endif; ?>
         </div>
         <form method="POST" class="edit-form">
@@ -260,7 +274,7 @@ require_once __DIR__ . '/includes/header.php';
                 <div class="form-group full"><label>Beschreibung</label><input type="text" name="beschreibung" value="<?php echo htmlspecialchars((string)($edit_rechnung['beschreibung'] ?? '')); ?>"></div>
             </div>
             <div class="edit-actions">
-                <a href="uploads/<?php echo htmlspecialchars($edit_rechnung['dateiname']); ?>" target="_blank" class="btn btn-outline">Ansehen</a>
+                <a href="<?php echo htmlspecialchars($edit_file_url); ?>" target="_blank" class="btn btn-outline">Ansehen</a>
                 <button
                     type="button"
                     class="btn btn-outline js-delete-edit"
@@ -337,7 +351,7 @@ require_once __DIR__ . '/includes/header.php';
 <div id="previewModal" class="preview-modal" hidden>
     <div class="preview-backdrop" data-close="1"></div>
     <div class="preview-content">
-        <div id="previewBody"></div>
+        <div id="previewBody" class="preview-body"></div>
     </div>
 </div>
 
@@ -360,7 +374,7 @@ function openPreview(file, type) {
     const modal = document.getElementById('previewModal');
     if (!file || !body || !modal) return;
     if ((type || '').toLowerCase().includes('pdf')) {
-        body.innerHTML = '<object data=\"' + file + '#toolbar=1\" type=\"application/pdf\" class=\"preview-doc\"></object>';
+        body.innerHTML = '<iframe src=\"' + file + '#page=1&zoom=page-width\" class=\"preview-doc preview-pdf\" loading=\"eager\"></iframe>';
     } else {
         body.innerHTML = '<img src=\"' + file + '\" alt=\"Rechnung\" class=\"preview-doc\">';
     }

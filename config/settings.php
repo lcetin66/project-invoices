@@ -3,7 +3,15 @@
 
 define('UPLOAD_DIR', __DIR__ . '/../uploads/');
 define('MAX_FILE_SIZE', 10485760); // 10 MB
-define('ALLOWED_TYPES', ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+define('ALLOWED_TYPES', [
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'image/webp',
+    'image/heic',
+    'image/heif',
+    'application/pdf'
+]);
 define('CLASSIFIER_API', 'http://127.0.0.1:5000/api/klassifizieren');
 define('INSIGHTS_API', 'http://127.0.0.1:5000/api/business_insights');
 

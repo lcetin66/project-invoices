@@ -2,6 +2,7 @@
 import argparse
 import json
 from classifier.ocr_engine import text_extrahieren, klassifizieren
+from classifier.ocr_engine import bild_text_extrahieren
 
 
 def qualitaet_score_berechnen(text: str, ergebnis: dict) -> int:
@@ -26,15 +27,21 @@ def qualitaet_score_berechnen(text: str, ergebnis: dict) -> int:
     return max(0, min(100, int(score)))
 
 
-def process_invoice_file(datei_pfad: str, api_key: str = "") -> dict:
+def process_invoice_file(datei_pfad: str, api_key: str = "", api_provider: str = "openrouter") -> dict:
     text = ""
-    if datei_pfad.lower().endswith(".pdf"):
+    lower = datei_pfad.lower()
+    if lower.endswith(".pdf"):
         try:
             text = text_extrahieren(datei_pfad)
         except Exception:
             text = ""
+    elif lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")):
+        try:
+            text = bild_text_extrahieren(datei_pfad)
+        except Exception:
+            text = ""
 
-    ergebnis = klassifizieren(text, api_key=api_key, datei_pfad=datei_pfad)
+    ergebnis = klassifizieren(text, api_key=api_key, datei_pfad=datei_pfad, api_provider=api_provider)
     qualitaet_score = qualitaet_score_berechnen(text, ergebnis)
     return {
         "ergebnis": ergebnis,

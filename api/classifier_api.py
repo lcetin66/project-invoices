@@ -8,8 +8,10 @@ import json
 import requests
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 from classifier.categories import STANDARDS_KATEGORIEN
 from main import process_invoice_file
@@ -21,6 +23,7 @@ CORS(app)
 UPLOAD_ORDNER = os.path.join(os.path.dirname(__file__), '..', 'uploads')
 os.makedirs(UPLOAD_ORDNER, exist_ok=True)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 
 @app.route('/api/klassifizieren', methods=['POST'])
@@ -40,9 +43,10 @@ def klassifiziere_rechnung():
 
     # Optional: API-Key aus dem Web-Frontend
     api_key = (request.form.get('api_key') or "").strip()
+    api_provider = (request.form.get('api_provider') or "openrouter").strip().lower()
 
     # Gemeinsamer Motor aus main.py (CLI + API)
-    out = process_invoice_file(datei_pfad, api_key=api_key)
+    out = process_invoice_file(datei_pfad, api_key=api_key, api_provider=api_provider)
 
     return jsonify({
         'erfolgreich': True,
@@ -85,6 +89,7 @@ def business_insights():
     payload = request.get_json(silent=True) or {}
     stats = payload.get('stats', {})
     api_key = (payload.get('api_key') or "").strip()
+    api_provider = (payload.get('api_provider') or "openrouter").strip().lower()
 
     if not stats:
         return jsonify({
@@ -104,7 +109,10 @@ def business_insights():
         "Reduzieren Sie Unbekannt/Nicht kategorisiert, um bessere KI-Entscheidungshilfen zu erhalten."
     ]
 
-    verwendeter_key = api_key or OPENROUTER_API_KEY
+    if api_provider == "openai":
+        verwendeter_key = api_key or OPENAI_API_KEY or OPENROUTER_API_KEY
+    else:
+        verwendeter_key = api_key or OPENROUTER_API_KEY or OPENAI_API_KEY
     if not verwendeter_key:
         return jsonify({'erfolgreich': True, 'quelle': 'fallback', 'insights': fallback})
 
@@ -119,18 +127,33 @@ Kennzahlen:
 """
 
     try:
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {verwendeter_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "openai/gpt-4o-mini",
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=20,
-        )
+        if api_provider == "openai":
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {verwendeter_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0,
+                },
+                timeout=20,
+            )
+        else:
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {verwendeter_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "openai/gpt-4o-mini",
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=20,
+            )
         data = response.json()
         if "choices" not in data:
             return jsonify({'erfolgreich': True, 'quelle': 'fallback', 'insights': fallback})
