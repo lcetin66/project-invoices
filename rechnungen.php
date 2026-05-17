@@ -4,6 +4,7 @@ require_once __DIR__ . '/config/settings.php';
 session_pruefen();
 
 $page_titel = 'Rechnungen - RechnungsManager';
+rechnungen_schema_sicherstellen();
 
 $gueltige_gruppen = ['week', 'month', 'quarter', 'year'];
 $zeit_gruppe = $_GET['zeitraum'] ?? 'month';
@@ -33,7 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_id'])) {
         $stmt = $pdo->prepare(
             'UPDATE rechnungen
              SET lieferant = ?, kategorie_id = ?, kategorie_name = ?, rechnung_typ = ?, faelligkeitsdatum = ?,
-                 netto_betrag = ?, mwst_satz = ?, mwst_betrag = ?, brutto_betrag = ?, waehrung = ?, beschreibung = ?
+                 rechnungsdatum = ?, netto_betrag = ?, mwst_satz = ?, mwst_betrag = ?, brutto_betrag = ?, waehrung = ?, beschreibung = ?
              WHERE id = ?'
         );
         $stmt->execute([
@@ -42,6 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_id'])) {
             $kategorie_name,
             in_array(($_POST['rechnung_typ'] ?? ''), ['eingang', 'ausgang'], true) ? $_POST['rechnung_typ'] : 'eingang',
             trim((string)($_POST['faelligkeitsdatum'] ?? '')) ?: null,
+            trim((string)($_POST['rechnungsdatum'] ?? '')) ?: null,
             (float)($_POST['netto_betrag'] ?? 0),
             (float)($_POST['mwst_satz'] ?? 0),
             (float)($_POST['mwst_betrag'] ?? 0),
@@ -101,10 +103,19 @@ function gruppen_label_rechnung(string $zeit_gruppe, string $datum): string {
     return date('m.Y', $ts);
 }
 
+function basis_datum_rechnung(array $rechnung): string {
+    $rd = trim((string)($rechnung['rechnungsdatum'] ?? ''));
+    if ($rd !== '') {
+        return $rd;
+    }
+    return (string)($rechnung['hochladezeit'] ?? '');
+}
+
 function rechnungen_gruppieren_rechnung(array $rechnungen, string $zeit_gruppe): array {
     $gruppen = [];
     foreach ($rechnungen as $rechnung) {
-        $key = gruppen_label_rechnung($zeit_gruppe, $rechnung['hochladezeit']);
+        $basis = basis_datum_rechnung($rechnung);
+        $key = gruppen_label_rechnung($zeit_gruppe, $basis);
         if (!isset($gruppen[$key])) {
             $gruppen[$key] = [];
         }
@@ -139,6 +150,11 @@ if ($kat_filter !== '') {
 }
 
 $aktive_rechnungen = $typ_filter === 'ausgang' ? $ausgang_rechnungen : $eingang_rechnungen;
+usort($aktive_rechnungen, static function(array $a, array $b): int {
+    $ta = strtotime(basis_datum_rechnung($a));
+    $tb = strtotime(basis_datum_rechnung($b));
+    return $tb <=> $ta;
+});
 $aktive_gruppen = rechnungen_gruppieren_rechnung($aktive_rechnungen, $zeit_gruppe);
 $edit_rechnung = null;
 if ($edit_id > 0) {
@@ -191,19 +207,30 @@ function render_rechnungs_card_rechnung(array $rechnung, array $kategorien, stri
             <?php endif; ?>
         </button>
         <div class="row-main">
-            <span class="rechnung-badge" style="background:<?php echo $kat_farbe ?: '#95A5A6'; ?>">
-                <?php echo htmlspecialchars($rechnung['kategorie_name'] ?: 'Nicht kategorisiert'); ?>
-            </span>
-            <strong><?php echo htmlspecialchars($rechnung['lieferant'] ?: 'Unbekannt'); ?></strong>
-            <span class="rechnung-betrag"><?php echo number_format((float)($rechnung['brutto_betrag'] ?? 0), 2, ',', ' '); ?> <?php echo htmlspecialchars($rechnung['waehrung'] ?? 'EUR'); ?></span>
-            <span class="row-meta">Netto: <?php echo number_format((float)($rechnung['netto_betrag'] ?? 0), 2, ',', ' '); ?></span>
-            <span class="row-meta">MwSt: <?php echo htmlspecialchars((string)($rechnung['mwst_satz'] ?? '0')); ?>%</span>
-            <span class="row-meta"><?php echo date('d.m.Y H:i', strtotime($rechnung['hochladezeit'])); ?></span>
-            <?php if (!empty($rechnung['beschreibung'])): ?>
-                <span class="row-meta"><?php echo htmlspecialchars($rechnung['beschreibung']); ?></span>
-            <?php endif; ?>
+            <div class="row-main-top">
+                <span class="rechnung-badge" style="background:<?php echo $kat_farbe ?: '#95A5A6'; ?>">
+                    <?php echo htmlspecialchars($rechnung['kategorie_name'] ?: 'Nicht kategorisiert'); ?>
+                </span>
+                <strong><?php echo htmlspecialchars($rechnung['lieferant'] ?: 'Unbekannt'); ?></strong>
+                <?php if (!empty($rechnung['beschreibung'])): ?>
+                    <span class="row-meta"><?php echo htmlspecialchars($rechnung['beschreibung']); ?></span>
+                <?php endif; ?>
+            </div>
+            <div class="row-main-bottom">
+                <span class="row-meta">Rechnungsdatum: <?php echo !empty($rechnung['rechnungsdatum']) ? date('d.m.Y', strtotime($rechnung['rechnungsdatum'])) : '-'; ?></span>
+                <span class="row-meta">Eingangsdatum: <?php echo date('d.m.Y H:i', strtotime($rechnung['hochladezeit'])); ?></span>
+            </div>
         </div>
         <div class="row-actions">
+            <div class="row-actions-amount">
+                <?php echo number_format((float)($rechnung['brutto_betrag'] ?? 0), 2, ',', ' '); ?>
+                <?php echo htmlspecialchars($rechnung['waehrung'] ?? 'EUR'); ?>
+            </div>
+            <div class="row-actions-meta">
+                MwSt: <?php echo htmlspecialchars((string)($rechnung['mwst_satz'] ?? '0')); ?>%
+                Netto: <?php echo number_format((float)($rechnung['netto_betrag'] ?? 0), 2, ',', ' '); ?>
+            </div>
+            <div class="row-actions-icons">
             <a href="<?php echo htmlspecialchars($file_url); ?>" target="_blank" class="action-square action-view" title="Ansehen" aria-label="Ansehen">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
@@ -231,6 +258,7 @@ function render_rechnungs_card_rechnung(array $rechnung, array $kategorien, stri
                     </svg>
                 </button>
             </form>
+            </div>
         </div>
     </div>
     <?php
@@ -271,6 +299,7 @@ require_once __DIR__ . '/includes/header.php';
                         <option value="ausgang" <?php echo ($edit_rechnung['rechnung_typ'] ?? '') === 'ausgang' ? 'selected' : ''; ?>>Ausgang</option>
                     </select>
                 </div>
+                <div class="form-group"><label>Rechnungsdatum</label><input type="date" name="rechnungsdatum" value="<?php echo htmlspecialchars((string)($edit_rechnung['rechnungsdatum'] ?? '')); ?>"></div>
                 <div class="form-group"><label>Fälligkeit</label><input type="date" name="faelligkeitsdatum" value="<?php echo htmlspecialchars((string)($edit_rechnung['faelligkeitsdatum'] ?? '')); ?>"></div>
                 <div class="form-group"><label>Netto</label><input type="number" step="0.01" name="netto_betrag" value="<?php echo htmlspecialchars((string)($edit_rechnung['netto_betrag'] ?? '0')); ?>"></div>
                 <div class="form-group"><label>MwSt.-Satz</label><input type="number" step="0.01" name="mwst_satz" value="<?php echo htmlspecialchars((string)($edit_rechnung['mwst_satz'] ?? '0')); ?>"></div>

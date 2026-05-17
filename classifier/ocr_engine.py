@@ -99,6 +99,7 @@ def _standard_response(ergebnis: dict) -> dict:
     return {
         "lieferant": ergebnis.get("lieferant", "Unbekannt"),
         "rechnung_typ": typ,
+        "rechnungsdatum": ergebnis.get("rechnungsdatum", ""),
         "kategorie": ergebnis.get("kategorie", "Sonstige"),
         "netto_betrag": ergebnis.get("netto_betrag", "0"),
         "mwst_satz": ergebnis.get("mwst_satz", ""),
@@ -134,6 +135,7 @@ Analysiere das Rechnungsbild und gib die folgenden Felder als JSON zuruck.
 Felder:
 - lieferant: Firmenname
 - rechnung_typ: "eingang" oder "ausgang"
+- rechnungsdatum: Rechnungsdatum im Format YYYY-MM-DD (wenn erkennbar)
 - kategorie: Eine der folgenden Kategorien (nur der Kategoriename):
 {list(STANDARDS_KATEGORIEN.keys())}
 - netto_betrag: Nettobetrag
@@ -141,6 +143,8 @@ Felder:
 - mwst_betrag: MwSt-Betrag
 - brutto_betrag: Bruttobetrag
 - waehrung: Währung
+- rechnungs_datum: Rechnungsdatum
+- faelligkeitsdatum: Faelligkeitsdatum
 
 WICHTIG:
 - Kategorisierung nach dem GEKAUFTEN PRODUKT / der LEISTUNG aus den Positionen.
@@ -206,6 +210,7 @@ Analysiere die folgende Rechnung und gib die folgenden Felder als JSON zuruck.
 Felder:
 - lieferant: Firmenname
 - rechnung_typ: "eingang" oder "ausgang"
+- rechnungsdatum: Rechnungsdatum im Format YYYY-MM-DD (wenn erkennbar)
 - kategorie: Eine der folgenden Kategorien (nur der Kategoriename):
 {list(STANDARDS_KATEGORIEN.keys())}
 - netto_betrag: Nettobetrag
@@ -213,6 +218,8 @@ Felder:
 - mwst_betrag: MwSt-Betrag
 - brutto_betrag: Bruttobetrag
 - waehrung: Währung
+- rechnungsdatum: Datum der Rechnung
+- faelligkeitsdatum: Datum der Faelligkeit
 
 WICHTIG:
 - Kategorisierung nach dem GEKAUFTEN PRODUKT / der LEISTUNG (Positionszeilen).
@@ -354,9 +361,21 @@ def nach_schluesselwort(text: str) -> dict:
     elif re.search(r"\bTRY|₺\b", text or "", re.IGNORECASE):
         waehrung = "TRY"
 
+    rechnungsdatum = ""
+    # Unterstützt: 15.05.2026, 15-05-2026, 2026-05-15, 2026/05/15
+    m_de = re.search(r"\b([0-3]?\d)[\./-]([01]?\d)[\./-](20\d{2})\b", text or "")
+    m_iso = re.search(r"\b(20\d{2})[\./-]([01]?\d)[\./-]([0-3]?\d)\b", text or "")
+    if m_iso:
+        y, mo, d = m_iso.groups()
+        rechnungsdatum = f"{int(y):04d}-{int(mo):02d}-{int(d):02d}"
+    elif m_de:
+        d, mo, y = m_de.groups()
+        rechnungsdatum = f"{int(y):04d}-{int(mo):02d}-{int(d):02d}"
+
     return {
         "lieferant": lieferant,
         "rechnung_typ": _typ_heuristik_aus_text(text),
+        "rechnungsdatum": rechnungsdatum,
         "kategorie": gefundene_kategorie,
         "netto_betrag": f"{netto:.2f}" if netto else "0",
         "mwst_satz": mwst_satz,

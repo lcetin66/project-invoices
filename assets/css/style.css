@@ -435,18 +435,51 @@ body {
 }
 .row-main {
     display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+.row-main-top {
+    display: flex;
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
-    flex: 1;
+}
+.row-main-bottom {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    min-height: 22px;
 }
 .row-meta { color: var(--text-light); font-size: .9rem; }
-.row-actions { display: flex; gap: 8px; }
+.row-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    min-width: 170px;
+}
+.row-actions-amount {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--primary);
+}
+.row-actions-meta {
+    font-size: .9rem;
+    color: var(--text-light);
+    font-weight: 600;
+}
+.row-actions-icons {
+    display: flex;
+    gap: 8px;
+}
 .action-square {
-    width: 40px;
-    height: 40px;
+    width: 34px;
+    height: 34px;
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 8px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -454,6 +487,10 @@ body {
     background: #f8fafc;
     color: #334155;
     cursor: pointer;
+}
+.action-square svg {
+    width: 15px;
+    height: 15px;
 }
 .action-view { background: #f1f5f9; color: #334155; border-color: #cbd5e1; }
 .action-edit { background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }

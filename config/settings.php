@@ -65,4 +65,15 @@ function app_setting_speichern(string $key, string $value): void {
     $stmt->execute([$key, $value]);
 }
 
+function rechnungen_schema_sicherstellen(): void {
+    global $pdo;
+    static $ok = false;
+    if ($ok) return;
+    $col = $pdo->query("SHOW COLUMNS FROM rechnungen LIKE 'rechnungsdatum'")->fetch();
+    if (!$col) {
+        $pdo->exec("ALTER TABLE rechnungen ADD COLUMN rechnungsdatum DATE NULL AFTER rechnung_typ");
+    }
+    $ok = true;
+}
+
 ?>

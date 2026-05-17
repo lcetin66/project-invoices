@@ -12,6 +12,7 @@ $zeit_gruppe = $_GET['zeitraum'] ?? 'month';
 if (!in_array($zeit_gruppe, $gueltige_gruppen, true)) {
     $zeit_gruppe = 'month';
 }
+rechnungen_schema_sicherstellen();
 
 function gruppen_label(string $zeit_gruppe, string $datum): string {
     $ts = strtotime($datum);
@@ -43,7 +44,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
     $datei = $_FILES['rechnung_datei'];
     $beschreibung = trim($_POST['beschreibung'] ?? '');
     $rechnung_typ = $_POST['rechnung_typ'] ?? 'auto';
+    $rechnungsdatum = trim($_POST['rechnungsdatum'] ?? '');
     $faelligkeitsdatum = trim($_POST['faelligkeitsdatum'] ?? '');
+    if ($rechnungsdatum === '') {
+        $rechnungsdatum = null;
+    }
     if ($faelligkeitsdatum === '') {
         $faelligkeitsdatum = null;
     }
@@ -113,16 +118,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
                     $erkannter_typ = 'eingang';
                 }
                 $finaler_typ = $rechnung_typ === 'auto' ? $erkannter_typ : $rechnung_typ;
+                $erk_rechnungsdatum = trim((string)($data['ergebnis']['rechnungsdatum'] ?? ''));
+                $final_rechnungsdatum = $rechnungsdatum ?: ($erk_rechnungsdatum !== '' ? $erk_rechnungsdatum : null);
 
                 $stmt = $pdo->prepare(
-                    'INSERT INTO rechnungen (dateiname, dateipfad, dateityp, rechnung_typ, beschreibung, lieferant, kategorie_name, netto_betrag, mwst_satz, mwst_betrag, brutto_betrag, waehrung, qualitaet_score, faelligkeitsdatum)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                    'INSERT INTO rechnungen (dateiname, dateipfad, dateityp, rechnung_typ, rechnungsdatum, beschreibung, lieferant, kategorie_name, netto_betrag, mwst_satz, mwst_betrag, brutto_betrag, waehrung, qualitaet_score, faelligkeitsdatum)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                 );
                 $stmt->execute([
                     $data['datei_name'],
                     'uploads/' . $data['datei_name'],
                     $datei['type'],
                     $finaler_typ,
+                    $final_rechnungsdatum,
                     $beschreibung,
                     $data['ergebnis']['lieferant'],
                     $data['ergebnis']['kategorie'],
@@ -137,6 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['rechnung_datei'])) {
 
                 $ergebnis = $data['ergebnis'];
                 $ergebnis['rechnung_typ'] = $finaler_typ;
+                $ergebnis['rechnungsdatum'] = $final_rechnungsdatum;
                 $ergebnis['datei_name'] = $data['datei_name'];
                 }
             } else {
@@ -252,6 +261,7 @@ require_once __DIR__ . '/includes/header.php';
             </div>
             <div class="upload-actions">
                 <input type="text" name="beschreibung" id="beschreibung" placeholder="Beschreibung (optional)">
+                <input type="date" name="rechnungsdatum" id="rechnungsdatum" class="filter-select" title="Rechnungsdatum">
                 <input type="date" name="faelligkeitsdatum" id="faelligkeitsdatum" class="filter-select" title="Fälligkeitsdatum">
                 <select name="rechnung_typ" id="rechnung_typ" class="filter-select">
                     <option value="auto" selected>Automatisch erkennen</option>
@@ -281,6 +291,7 @@ require_once __DIR__ . '/includes/header.php';
                 <div class="ergebnis-item"><span class="ergebnis-label">Bruttobetrag</span><span class="ergebnis-value highlight"><?php echo htmlspecialchars($ergebnis['brutto_betrag'] ?? '0'); ?> <?php echo htmlspecialchars($ergebnis['waehrung'] ?? 'EUR'); ?></span></div>
                 <div class="ergebnis-item"><span class="ergebnis-label">Kategorie</span><span class="ergebnis-value"><?php echo htmlspecialchars($ergebnis['kategorie']); ?></span></div>
                 <div class="ergebnis-item"><span class="ergebnis-label">Rechnungstyp</span><span class="ergebnis-value"><?php echo htmlspecialchars(($ergebnis['rechnung_typ'] ?? 'eingang') === 'ausgang' ? 'Ausgang' : 'Eingang'); ?></span></div>
+                <div class="ergebnis-item"><span class="ergebnis-label">Rechnungsdatum</span><span class="ergebnis-value"><?php echo !empty($ergebnis['rechnungsdatum']) ? htmlspecialchars(date('d.m.Y', strtotime((string)$ergebnis['rechnungsdatum']))) : '-'; ?></span></div>
             </div>
             <div class="btn-row"><a href="rechnungen.php" class="btn btn-outline">Zu Rechnungen</a></div>
         </div>

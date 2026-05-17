@@ -105,8 +105,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['aktion'])) {
     } elseif ($_POST['aktion'] === 'kat_loeschen') {
         $kat_id = (int)($_POST['kat_id'] ?? 0);
         if ($kat_id > 0) {
-            $stmt = $pdo->prepare('SELECT COUNT(*) FROM rechnungen WHERE kategorie_id = ?');
-            $stmt->execute([$kat_id]);
+            $stmtKat = $pdo->prepare('SELECT name FROM kategorien WHERE id = ?');
+            $stmtKat->execute([$kat_id]);
+            $kat_name = (string)($stmtKat->fetchColumn() ?: '');
+
+            $stmt = $pdo->prepare('
+                SELECT COUNT(*) 
+                FROM rechnungen 
+                WHERE kategorie_id = ?
+                   OR (kategorie_id IS NULL AND kategorie_name = ?)
+                   OR (kategorie_id = 0 AND kategorie_name = ?)
+            ');
+            $stmt->execute([$kat_id, $kat_name, $kat_name]);
             $anzahl_rechnungen = (int)$stmt->fetchColumn();
 
             if ($anzahl_rechnungen > 0) {
@@ -389,7 +399,7 @@ require_once __DIR__ . '/includes/header.php';
                                     </svg>
                                 </button>
                             </form>
-                            <form method="POST" style="display:inline;" onsubmit="return confirm('Kategorie wirklich löschen?')">
+                            <form method="POST" style="display:inline;" class="js-kat-delete-form" data-kat-name="<?php echo htmlspecialchars($kat['name']); ?>">
                                 <input type="hidden" name="aktion" value="kat_loeschen">
                                 <input type="hidden" name="kat_id" value="<?php echo $kat['id']; ?>">
                                 <button type="submit" class="btn-icon btn-loeschen" title="Löschen">
@@ -546,6 +556,17 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 </div>
 
+<div id="katDeleteModal" class="popup-overlay" style="display:none;">
+    <div class="popup-card">
+        <h3>Kategorie löschen</h3>
+        <p id="katDeleteText">Kategorie wirklich löschen?</p>
+        <div class="btn-row">
+            <button type="button" class="btn btn-outline" id="katDeleteCancel">Abbrechen</button>
+            <button type="button" class="btn btn-primary" id="katDeleteOk">OK</button>
+        </div>
+    </div>
+</div>
+
 <style>
 .admin-layout {
     display: grid;
@@ -610,6 +631,17 @@ require_once __DIR__ . '/includes/header.php';
 .api-key-status.ok { color: #166534; }
 .api-key-status.fail { color: #b91c1c; }
 .kat-form { margin-bottom: 20px; }
+.admin-main .kat-form .btn {
+    margin-top: 10px;
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+}
+.admin-main .kat-form .btn:hover {
+    background: var(--primary-dark);
+    border-color: var(--primary-dark);
+    color: #fff;
+}
 .color-picker { width: 100%; height: 40px; border: 2px solid var(--border); border-radius: 8px; cursor: pointer; }
 .kat-liste { display: flex; flex-direction: column; gap: 8px; }
 .kat-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: var(--bg); }
@@ -628,6 +660,38 @@ if (popupOkBtn) {
     popupOkBtn.addEventListener('click', function() {
         const popup = document.getElementById('statusPopup');
         if (popup) popup.remove();
+    });
+}
+
+let pendingKatDeleteForm = null;
+const katDeleteModal = document.getElementById('katDeleteModal');
+const katDeleteText = document.getElementById('katDeleteText');
+const katDeleteCancel = document.getElementById('katDeleteCancel');
+const katDeleteOk = document.getElementById('katDeleteOk');
+
+document.querySelectorAll('.js-kat-delete-form').forEach(function(form) {
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        pendingKatDeleteForm = form;
+        if (katDeleteText) {
+            const name = form.dataset.katName || 'Kategorie';
+            katDeleteText.textContent = '"' + name + '" wirklich löschen?';
+        }
+        if (katDeleteModal) katDeleteModal.style.display = 'flex';
+    });
+});
+
+if (katDeleteCancel) {
+    katDeleteCancel.addEventListener('click', function() {
+        pendingKatDeleteForm = null;
+        if (katDeleteModal) katDeleteModal.style.display = 'none';
+    });
+}
+if (katDeleteOk) {
+    katDeleteOk.addEventListener('click', function() {
+        if (pendingKatDeleteForm) {
+            HTMLFormElement.prototype.submit.call(pendingKatDeleteForm);
+        }
     });
 }
 
