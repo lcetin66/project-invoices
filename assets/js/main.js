@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!file) return;
             if (uploadLabel) uploadLabel.textContent = file.name;
             if (submitBtn) submitBtn.style.display = '';
+            if (window.appDebugLog) window.appDebugLog('ui.file.selected', { name: file.name, size: file.size, type: file.type });
         };
 
         // Keep the browser from opening dropped files in the tab.
@@ -67,6 +68,15 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
                 setSelectedFileUI(droppedFiles[0]);
+            }
+        });
+
+        // Prevent accidental double-submit (double-click / slow network retries).
+        dropZone.addEventListener('submit', function() {
+            if (window.appDebugLog) window.appDebugLog('ui.form.submit', { form: 'dropZone' });
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.style.opacity = '0.7';
             }
         });
     }

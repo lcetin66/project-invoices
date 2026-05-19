@@ -1,0 +1,9 @@
+pdfplumber
+flask
+flask-cors
+python-dotenv
+requests
+pillow
+pytesseract
+paddleocr
+paddlepaddle

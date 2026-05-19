@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
-from classifier.ocr_engine import text_extrahieren, klassifizieren
-from classifier.ocr_engine import bild_text_extrahieren
+from classifier.ocr_engine import text_extrahieren, klassifizieren, bild_text_extrahieren, get_last_vision_debug
 
 
 def qualitaet_score_berechnen(text: str, ergebnis: dict) -> int:
@@ -36,16 +35,22 @@ def process_invoice_file(datei_pfad: str, api_key: str = "", api_provider: str =
         except Exception:
             text = ""
     elif lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")):
-        try:
-            text = bild_text_extrahieren(datei_pfad)
-        except Exception:
-            text = ""
+        # Image flow is direct vision now (no local OCR pre-pass).
+        text = ""
 
     ergebnis = klassifizieren(text, api_key=api_key, datei_pfad=datei_pfad, api_provider=api_provider, api_model=api_model)
     qualitaet_score = qualitaet_score_berechnen(text, ergebnis)
+    preview = (text or "").strip().replace("\r", "")
+    preview = preview[:600]
     return {
         "ergebnis": ergebnis,
         "qualitaet_score": qualitaet_score,
+        "debug": {
+            "ocr_text_len": len((text or "").strip()),
+            "ocr_text_preview": preview,
+            "mode": "vision_direct_image" if lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")) else "text_ocr",
+            "vision_debug": get_last_vision_debug() if lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")) else "",
+        },
     }
 
 

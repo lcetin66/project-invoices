@@ -1,140 +1,167 @@
-# RechnungsManager - Rechnungsklassifizierung
+# RechnungsManager (Next.js + Python AI)
 
-Eine Anwendung zur automatischen Klassifizierung von Rechnungen mit Python (OCR + KI), SQL und PHP.
+Bu proje artık **Next.js frontend/backend (App Router)** üzerinde çalışır.
+AI sınıflandırma akışı ise aynen **Python Flask API** (`api/classifier_api.py`) tarafında kalır.
 
-## Voraussetzungen
+## Mimari
 
-- XAMPP (Apache + MySQL)
+- `nextjs-app/`: Yeni Next.js uygulaması (login, upload, invoices, admin)
+- `api/classifier_api.py`: Python AI sınıflandırma API'si
+- `classifier/`: OCR + AI sınıflandırma motoru
+- `sql/schema.sql`: MySQL şeması
+- `uploads/`: Yüklenen dosyalar (Next.js ve Python tarafından ortak kullanılır)
+
+## Gereksinimler
+
 - Python 3.8+
-- pip-Pakete
+- Node.js 20+
+- MySQL (XAMPP/MySQL Server olabilir)
 
-## Installation
+## 1) Veritabanını hazırlama
 
-### 1. XAMPP starten
+1. MySQL'i başlat.
+2. `sql/schema.sql` dosyasını içe aktar.
 
-Starten Sie in der XAMPP Control Panel **Apache** und **MySQL**.
-
-### 2. Datenbank erstellen
-
-1. Offnen Sie `http://localhost/phpmyadmin` im Browser.
-2. Gehen Sie auf den Reiter "SQL".
-3. Kopieren Sie den Inhalt von `sql/schema.sql` und fuhren Sie ihn aus.
-
-### 3. Python-Pakete installieren
+Örnek (terminal):
 
 ```bash
-pip install pdfplumber flask flask-cors python-dotenv requests
+mysql -u root -p < sql/schema.sql
 ```
 
-### 4. Python KI-API starten
+## 2) Python AI API kurulum ve çalıştırma
+
+Proje kökünde:
 
 ```bash
-python3 api/classifier_api.py
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-Die API lauft auf `http://127.0.0.1:5000`.
-
-### 5. Projekt nach XAMPP htdocs kopieren
-
-```bash
-cp -r Masterschool-Project /Applications/XAMPP/xamppfiles/htdocs/rechnung
-```
-
-### 6. Im Browser offnen
-
-```
-http://localhost/rechnung
-```
-
-## Anmeldedaten
-
-| Benutzer  | Passwort |
-|-----------|----------|
-| admin     | admin123 |
-
-## Projektstruktur
-
-```
-Masterschool-Project/
-├── main.py                     # Haupt-Python-Skript (CLI)
-├── api/
-│   └── classifier_api.py       # Flask REST-API (Port 5000)
-├── classifier/
-│   ├── __init__.py
-│   ├── categories.py           # Kategori-Definitionen
-│   └── ocr_engine.py           # OCR + KI-Klassifizierer
-├── config/
-│   ├── database.php            # Datenbank-Verbindung
-│   └── settings.php            # Projekteinstellungen
-├── includes/
-│   ├── header.php              # Navbar und HTML-Header
-│   └── footer.php              # HTML-Fusszeile
-├── assets/
-│   ├── css/style.css           # Stylesheet
-│   └── js/main.js              # JavaScript
-├── sql/
-│   └── schema.sql              # Datenbank-Schema
-├── uploads/                    # Hochgeladene Dateien
-├── eingabe.php                 # Eingabe-Seite (Rechnung hochladen)
-├── admin.php                   # Administrations-Seite (Kategorie-Verwaltung)
-├── index.php                   # Anmeldeseite
-├── logout.php                  # Abmelden
-└── README.md                   # Diese Datei
-```
-
-## So funktioniert es
-
-1. **Anmeldung**: Melden Sie sich mit admin/admin123 an.
-2. **Eingabe**: Laden Sie eine PDF oder ein Bild hoch.
-3. **OCR + KI**: Python extrahiert den Text und klassifiziert die Rechnung mit OpenRouter KI.
-4. **Datenbank**: Die Ergebnisse werden in MySQL gespeichert.
-5. **Verwaltung**: Verwalten Sie Kategorien auf der Administrations-Seite.
-
-## Hinweise
-
-- Der OpenRouter-API-Schusseler wird in der `.env`-Datei gespeichert.
-- Die Python-API muss laufend laufen (Port 5000).
-- Rechnungen werden im `uploads/`-Ordner gespeichert.
-
-## Update-Übersicht (Mai 2026)
-
-Die Anwendung wurde für den produktiven KMU-Einsatz erweitert:
-
-- Eingangs- und Ausgangsrechnungen als separate Bereiche.
-- Zeitbasierte Gruppierung: täglich, wöchentlich, monatlich, jährlich.
-- Moderne Admin-Statistik mit KPIs (Top-Zeitraum, Top-Kategorie, Top-Lieferant, Cashflow, 30-Tage-Trend).
-- KI-Empfehlungen im Admin-Dashboard (inkl. Fallback ohne API-Key).
-- API-Key-Verwaltung direkt im Admin-Panel (pro Installation speicherbar).
-- OCR-Qualitätsscore pro Rechnung.
-- Fälligkeitsdatum und Kennzahlen für überfällige/nah fällige Rechnungen.
-- Kategorie-Monatsbudgets mit Warnungen ab hoher Auslastung.
-- Thumbnail-Vorschau für hochgeladene Rechnungen (inkl. PDF-Fallback).
-- Gemeinsamer Analyse-Motor: `main.py` wird von CLI und Flask-API genutzt.
-
-## Schneller Start (Empfohlen)
-
-Wenn Sie die Anwendung so einfach wie möglich nutzen möchten:
-
-1. API starten (Terminal 1):
+API başlat:
 
 ```bash
 ./scripts/start_api.sh
 ```
 
-2. Projekt nach XAMPP synchronisieren (Terminal 2):
+Varsayılan API adresi:
+
+- `http://127.0.0.1:8000`
+
+Kontrol:
 
 ```bash
-./scripts/deploy_local.sh
+curl -i http://127.0.0.1:8000/api/kategorien
 ```
 
-3. Browser öffnen:
-
-```
-http://localhost/rechnung
-```
-
-Bei Änderungen im Projekt reicht danach meist nur:
+## 3) Next.js uygulamasını ayarlama
 
 ```bash
-./scripts/deploy_local.sh
+cd nextjs-app
+cp .env.example .env.local
+```
+
+`nextjs-app/.env.local` içinde en az şu değerleri kontrol et:
+
+```env
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_NAME=firma_rechnungen
+DB_USER=root
+DB_PASS=
+
+CLASSIFIER_API_URL=http://127.0.0.1:8000
+SESSION_SECRET=buraya-uzun-rastgele-bir-secret-yaz
+UPLOAD_DIR=../uploads
+```
+
+Ardından bağımlılık kur:
+
+```bash
+npm install
+```
+
+Geliştirme sunucusunu başlat:
+
+```bash
+npm run dev
+```
+
+Uygulama adresi:
+
+- `http://localhost:3000`
+
+## 4) Giriş
+
+Varsayılan kullanıcı:
+
+- Benutzername: `admin`
+- Passwort: `admin123`
+
+## 5) Üretim (production)
+
+```bash
+cd nextjs-app
+npm run build
+npm run start
+```
+
+## Özellik eşlemesi (PHP -> Next.js)
+
+- Login/Logout: Next API (`/api/auth/*`) + cookie session
+- Rechnung Upload + AI classify: Next `/api/invoices` -> Python `/api/klassifizieren`
+- Rechnungen listeleme/düzenleme/silme: Next `/api/invoices`, `/api/invoices/[id]`
+- Kategori + bütçe yönetimi: Next `/api/categories*`
+- AI ayarları (provider/model/key): Next `/api/settings/ai`
+- KPI + AI insights: Next `/api/stats` -> Python `/api/business_insights`
+
+## Notlar
+
+- Python API kapalıysa upload/classification çalışmaz.
+- Dosyalar `uploads/` klasöründe tutulur.
+- AI key'i Admin sayfasından kaydedebilirsin.
+- Proje PHP içermez; tek akış Next.js + Python API'dir.
+
+## Sorun giderme
+
+1. `Nicht autorisiert` hatası:
+- Tekrar login ol.
+- Tarayıcıda cookie engeli olmadığını kontrol et.
+
+2. `Classifier API error` hatası:
+- Python API'nin açık olduğundan emin ol (`curl` ile test et).
+- `CLASSIFIER_API_URL` değerini kontrol et.
+
+3. DB bağlantı hatası:
+- `nextjs-app/.env.local` içindeki DB ayarlarını doğrula.
+- `firma_rechnungen` veritabanının oluştuğunu kontrol et.
+
+## Hosting (Production) Hızlı Kurulum
+
+Sunucuda proje dizininde:
+
+```bash
+cp nextjs-app/.env.example nextjs-app/.env.local
+# nextjs-app/.env.local degerlerini doldur
+# kok dizindeki .env dosyasina OPENAI_API_KEY vb degerleri gir
+```
+
+Kurulum + build:
+
+```bash
+./scripts/hosting_bootstrap.sh
+```
+
+PM2 ile başlatma:
+
+```bash
+./scripts/hosting_start.sh
+pm2 status
+```
+
+PM2 autostart:
+
+```bash
+pm2 startup
+pm2 save
 ```

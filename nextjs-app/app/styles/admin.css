@@ -1,0 +1,17 @@
+.admin-debug-tools {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.admin-debug-tools-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-switch-row {
+  justify-content: space-between;
+  width: 100%;
+}
