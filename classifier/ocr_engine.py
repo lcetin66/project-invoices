@@ -5,6 +5,7 @@ import requests
 import base64
 import re
 import tempfile
+from io import BytesIO
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from .categories import STANDARDS_KATEGORIEN
@@ -41,10 +42,24 @@ _PADDLE_INSTANCE = None
 _PADDLE_INIT_FAILED = False
 LOCAL_OCR_CACHE_ROOT = os.path.join(tempfile.gettempdir(), "masterschool_ocr_cache")
 _LAST_VISION_DEBUG = ""
+_LAST_VISION_TRACE = {}
+
+
+def _normalize_api_model(api_provider: str, api_model: str) -> str:
+    provider = (api_provider or "openrouter").strip().lower()
+    raw = (api_model or "").strip()
+    if not raw:
+        return "gpt-4o-mini" if provider == "openai" else "openai/gpt-4o-mini"
+    return raw
 
 
 def get_last_vision_debug() -> str:
     return str(_LAST_VISION_DEBUG or "")
+
+
+def get_last_vision_trace() -> dict:
+    trace = _LAST_VISION_TRACE
+    return trace if isinstance(trace, dict) else {}
 
 
 def _typ_heuristik_aus_text(text: str) -> str:
@@ -138,6 +153,14 @@ def _pil_lanczos():
     return Image.LANCZOS
 
 
+def _pil_bicubic():
+    if Image is None:
+        return None
+    if hasattr(Image, "Resampling"):
+        return Image.Resampling.BICUBIC
+    return Image.BICUBIC
+
+
 def _clean_ocr_text(text: str) -> str:
     if not text:
         return ""
@@ -151,7 +174,7 @@ def _prepare_image_for_local_ocr(datei_pfad: str, use_crop: bool = True):
         return None
     try:
         with Image.open(datei_pfad) as raw:
-            img = _crop_rechnung_region(raw) if use_crop else raw.convert("RGB")
+            img = prepare_invoice_image(raw) if use_crop else raw.convert("RGB")
             gray = img.convert("L")
             if ImageOps is not None:
                 gray = ImageOps.autocontrast(gray)
@@ -182,7 +205,7 @@ def _prepare_image_variants_for_local_ocr(datei_pfad: str):
     for use_crop in (True, False):
         try:
             with Image.open(datei_pfad) as raw:
-                img = _crop_rechnung_region(raw) if use_crop else raw.convert("RGB")
+                img = prepare_invoice_image(raw) if use_crop else raw.convert("RGB")
                 gray = img.convert("L")
                 if ImageOps is not None:
                     gray = ImageOps.autocontrast(gray)
@@ -448,22 +471,538 @@ def _crop_rechnung_region(img):
         return img
 
 
+def _order_document_points(points):
+    pts = np.array(points, dtype="float32").reshape(4, 2)
+    sums = pts.sum(axis=1)
+    diffs = np.diff(pts, axis=1).reshape(4)
+    ordered = np.zeros((4, 2), dtype="float32")
+    ordered[0] = pts[np.argmin(sums)]
+    ordered[2] = pts[np.argmax(sums)]
+    ordered[1] = pts[np.argmin(diffs)]
+    ordered[3] = pts[np.argmax(diffs)]
+    return ordered
+
+
+def _perspective_warp_document(src):
+    if np is None or cv2 is None:
+        return None
+
+    arr = np.array(src.convert("RGB"), dtype=np.uint8)
+    h, w = arr.shape[:2]
+    if w < 80 or h < 80:
+        return None
+
+    max_side = 1600
+    scale = min(1.0, max_side / float(max(w, h)))
+    if scale < 1.0:
+        work = cv2.resize(arr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    else:
+        work = arr.copy()
+
+    wh, ww = work.shape[:2]
+    maxc = work.max(axis=2)
+    minc = work.min(axis=2)
+    spread = maxc - minc
+    gray_raw = cv2.cvtColor(work, cv2.COLOR_RGB2GRAY)
+
+    paper_mask = ((gray_raw > 185) & (spread < 60)).astype(np.uint8) * 255
+    kernel = np.ones((9, 9), np.uint8)
+    paper_mask = cv2.morphologyEx(paper_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    paper_mask = cv2.morphologyEx(paper_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    contours, _ = cv2.findContours(paper_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    img_area = float(ww * wh)
+    if contours:
+        best_contour = None
+        best_area = 0.0
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area < img_area * 0.04:
+                continue
+            rect = cv2.minAreaRect(contour)
+            (rw, rh) = rect[1]
+            if rw <= 1 or rh <= 1:
+                continue
+            rect_area = rw * rh
+            fill = area / max(rect_area, 1.0)
+            aspect = max(rw, rh) / max(min(rw, rh), 1.0)
+            if fill < 0.35 or aspect > 12:
+                continue
+            if area > best_area:
+                best_area = area
+                best_contour = contour
+
+        if best_contour is not None:
+            rect = cv2.minAreaRect(best_contour)
+            box = cv2.boxPoints(rect)
+            quad = _order_document_points(box) / max(scale, 1e-6)
+            width_top = np.linalg.norm(quad[1] - quad[0])
+            width_bottom = np.linalg.norm(quad[2] - quad[3])
+            height_right = np.linalg.norm(quad[2] - quad[1])
+            height_left = np.linalg.norm(quad[3] - quad[0])
+            out_w = int(max(width_top, width_bottom))
+            out_h = int(max(height_right, height_left))
+            if out_w >= int(w * 0.12) and out_h >= int(h * 0.12):
+                dst = np.array(
+                    [[0, 0], [out_w - 1, 0], [out_w - 1, out_h - 1], [0, out_h - 1]],
+                    dtype="float32",
+                )
+                matrix = cv2.getPerspectiveTransform(quad.astype("float32"), dst)
+                warped = cv2.warpPerspective(arr, matrix, (out_w, out_h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+                return Image.fromarray(warped)
+
+    gray = cv2.GaussianBlur(gray_raw, (5, 5), 0)
+    edges = cv2.Canny(gray, 45, 140)
+    kernel = np.ones((5, 5), np.uint8)
+    edges = cv2.dilate(edges, kernel, iterations=1)
+    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    best_quad = None
+    best_score = -1.0
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < img_area * 0.08:
+            continue
+        peri = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, 0.025 * peri, True)
+        if len(approx) != 4 or not cv2.isContourConvex(approx):
+            continue
+
+        pts = _order_document_points(approx.reshape(4, 2))
+        width_top = np.linalg.norm(pts[1] - pts[0])
+        width_bottom = np.linalg.norm(pts[2] - pts[3])
+        height_right = np.linalg.norm(pts[2] - pts[1])
+        height_left = np.linalg.norm(pts[3] - pts[0])
+        doc_w = max(width_top, width_bottom)
+        doc_h = max(height_right, height_left)
+        if doc_w < ww * 0.18 or doc_h < wh * 0.18:
+            continue
+        aspect = doc_h / max(doc_w, 1.0)
+        if aspect < 0.55 or aspect > 8.5:
+            continue
+
+        rect_area = doc_w * doc_h
+        fill = area / max(rect_area, 1.0)
+        if fill < 0.45:
+            continue
+        center = pts.mean(axis=0)
+        center_bonus = 1.0 - min(1.0, abs(center[0] - ww / 2.0) / max(ww / 2.0, 1.0))
+        score = area * (0.75 + 0.25 * center_bonus) * min(1.15, fill)
+        if score > best_score:
+            best_score = score
+            best_quad = pts
+
+    if best_quad is None:
+        return None
+
+    quad = best_quad / max(scale, 1e-6)
+    width_top = np.linalg.norm(quad[1] - quad[0])
+    width_bottom = np.linalg.norm(quad[2] - quad[3])
+    height_right = np.linalg.norm(quad[2] - quad[1])
+    height_left = np.linalg.norm(quad[3] - quad[0])
+    out_w = int(max(width_top, width_bottom))
+    out_h = int(max(height_right, height_left))
+    if out_w < int(w * 0.15) or out_h < int(h * 0.15):
+        return None
+
+    dst = np.array([[0, 0], [out_w - 1, 0], [out_w - 1, out_h - 1], [0, out_h - 1]], dtype="float32")
+    matrix = cv2.getPerspectiveTransform(quad.astype("float32"), dst)
+    warped = cv2.warpPerspective(arr, matrix, (out_w, out_h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    return Image.fromarray(warped)
+
+
+def _enhance_invoice_image(img):
+    if Image is None:
+        return img
+    out = img.convert("RGB")
+
+    if np is not None and cv2 is not None:
+        try:
+            arr = np.array(out, dtype=np.uint8)
+            gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+
+            # Remove broad shadows/wrinkle shading while keeping printed text.
+            bg_kernel = max(71, (min(gray.shape[:2]) // 7) | 1)
+            background = cv2.GaussianBlur(gray, (bg_kernel, bg_kernel), 0)
+            flattened = cv2.divide(gray, background, scale=238)
+
+            # Local contrast helps faint thermal/receipt text survive wrinkles.
+            clahe = cv2.createCLAHE(clipLimit=1.25, tileGridSize=(8, 8))
+            contrast = clahe.apply(flattened)
+
+            # Gentle denoise, then unsharp mask for characters.
+            denoised = cv2.fastNlMeansDenoising(contrast, None, h=9, templateWindowSize=7, searchWindowSize=21)
+            denoised = cv2.bilateralFilter(denoised, 5, 18, 18)
+            blurred = cv2.GaussianBlur(denoised, (0, 0), 1.0)
+            sharpened = cv2.addWeighted(denoised, 1.38, blurred, -0.38, 0)
+
+            # Keep a white-ish paper background and dark text without hard binarizing.
+            normalized = cv2.normalize(sharpened, None, 18, 255, cv2.NORM_MINMAX)
+            normalized = np.clip(normalized * 1.04 + 5, 0, 255).astype(np.uint8)
+            return Image.fromarray(cv2.cvtColor(normalized, cv2.COLOR_GRAY2RGB))
+        except Exception:
+            pass
+
+    if ImageOps is not None:
+        out = ImageOps.autocontrast(out, cutoff=1)
+    if ImageEnhance is not None:
+        out = ImageEnhance.Contrast(out).enhance(1.14)
+        out = ImageEnhance.Sharpness(out).enhance(1.35)
+    return out
+
+
+def _trim_background_edges(img):
+    if np is None or cv2 is None:
+        return img
+    try:
+        arr = np.array(img.convert("RGB"), dtype=np.uint8)
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        h, w = gray.shape[:2]
+        if w < 120 or h < 120:
+            return img
+
+        # Find printed content. This catches the real document area even on a light fabric background.
+        dark = (gray < 115).astype(np.uint8) * 255
+        dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, np.ones((5, 17), np.uint8), iterations=1)
+        n_labels, _, stats, _ = cv2.connectedComponentsWithStats(dark, connectivity=8)
+        boxes = []
+        for i in range(1, n_labels):
+            x, y, bw, bh, area = stats[i]
+            if area < max(12, int(w * h * 0.000015)):
+                continue
+            if x <= 2 or y <= 2 or x + bw >= w - 2 or y + bh >= h - 2:
+                continue
+            if bh > h * 0.28 and bw < w * 0.18:
+                continue
+            if bw > w * 0.45 and bh > h * 0.20:
+                continue
+            if bw > w * 0.95 and bh > h * 0.95:
+                continue
+            boxes.append((x, y, x + bw, y + bh, area))
+        if not boxes:
+            return img
+
+        weighted_x = []
+        weighted_y = []
+        for bx0, by0, bx1, by1, area in boxes:
+            weight = max(1, int(area // 50))
+            weighted_x.extend([bx0, bx1] * weight)
+            weighted_y.extend([by0, by1] * weight)
+
+        if len(weighted_x) < 8 or len(weighted_y) < 8:
+            return img
+
+        x0 = int(np.percentile(weighted_x, 5))
+        x1 = int(np.percentile(weighted_x, 95))
+        y0 = int(np.percentile(weighted_y, 2))
+        y1 = int(np.percentile(weighted_y, 98))
+
+        content_w = x1 - x0
+        content_h = y1 - y0
+        if content_w < w * 0.08 or content_h < h * 0.10:
+            return img
+
+        # Add generous margins so paper edges/blank document areas remain, but wide background is removed.
+        pad_x = max(18, int(content_w * 0.08))
+        pad_y = max(24, int(content_h * 0.08))
+        x0 = max(0, x0 - pad_x)
+        x1 = min(w, x1 + pad_x)
+        y0 = max(0, y0 - pad_y)
+        y1 = min(h, y1 + pad_y)
+
+        cropped_w = x1 - x0
+        cropped_h = y1 - y0
+        if cropped_w < w * 0.35 or cropped_h < h * 0.35:
+            return img
+
+        # Only trim when it actually removes a meaningful background band.
+        if cropped_w <= w * 0.92 or cropped_h <= h * 0.92:
+            return img.crop((x0, y0, x1, y1))
+        return img
+    except Exception:
+        return img
+
+
+def _detect_tesseract_rotation_degrees(img) -> int | None:
+    if pytesseract is None:
+        return None
+    try:
+        osd = pytesseract.image_to_osd(img.convert("RGB"), config="--psm 0")
+    except Exception:
+        return None
+    try:
+        match = re.search(r"Rotate:\s*(\d+)", osd or "", re.IGNORECASE)
+        if not match:
+            return None
+        degrees = int(match.group(1)) % 360
+        return degrees if degrees in (0, 90, 180, 270) else None
+    except Exception:
+        return None
+
+
+def _text_projection_score_for_rotation(img, degrees: int) -> float:
+    if np is None or cv2 is None:
+        return 0.0
+    try:
+        candidate = img.rotate(degrees, expand=True)
+        arr = np.array(candidate.convert("RGB"), dtype=np.uint8)
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        h, w = gray.shape[:2]
+        if w < 80 or h < 80:
+            return 0.0
+        dark = (gray < 150).astype(np.uint8)
+        dark_ratio = float(dark.mean())
+        if dark_ratio < 0.002:
+            return 0.0
+
+        row_counts = dark.sum(axis=1).astype(np.float32)
+        col_counts = dark.sum(axis=0).astype(np.float32)
+        row_signal = float(np.percentile(row_counts, 95) - np.percentile(row_counts, 45)) / max(w, 1)
+        col_signal = float(np.percentile(col_counts, 95) - np.percentile(col_counts, 45)) / max(h, 1)
+        portrait_bonus = 0.22 if h >= w else -0.10
+        top_dark = float(dark[: max(1, h // 5), :].mean())
+        bottom_dark = float(dark[-max(1, h // 5) :, :].mean())
+        header_bonus = 0.05 if top_dark >= bottom_dark * 0.65 else -0.04
+        return row_signal - col_signal + portrait_bonus + header_bonus
+    except Exception:
+        return 0.0
+
+
+def _ocr_readability_score_for_rotation(img, degrees: int) -> float:
+    if pytesseract is None:
+        return 0.0
+    try:
+        candidate = img.rotate(degrees, expand=True).convert("RGB")
+        w, h = candidate.size
+        max_side = 1200
+        if max(w, h) > max_side:
+            scale = max_side / float(max(w, h))
+            resample = _pil_lanczos()
+            if resample is not None:
+                candidate = candidate.resize((max(1, int(w * scale)), max(1, int(h * scale))), resample=resample)
+
+        data = pytesseract.image_to_data(
+            candidate,
+            lang="deu+eng",
+            config="--oem 3 --psm 6",
+            output_type=pytesseract.Output.DICT,
+            timeout=6,
+        )
+        words = []
+        confidences = []
+        for text, conf in zip(data.get("text", []), data.get("conf", [])):
+            token = str(text or "").strip()
+            if len(token) < 2:
+                continue
+            try:
+                c = float(conf)
+            except Exception:
+                c = -1.0
+            if c < 0:
+                continue
+            words.append(token)
+            confidences.append(c)
+        if not words:
+            return 0.0
+
+        joined = " ".join(words).lower()
+        alpha_words = sum(1 for token in words if re.search(r"[a-zA-ZÄÖÜäöüß]{3,}", token))
+        number_words = sum(1 for token in words if re.search(r"\d", token))
+        keyword_hits = sum(
+            1
+            for kw in (
+                "rechnung",
+                "reserved",
+                "summe",
+                "total",
+                "betrag",
+                "mwst",
+                "ust",
+                "kasse",
+                "beleg",
+                "datum",
+                "steuer",
+                "karte",
+                "eur",
+            )
+            if kw in joined
+        )
+        avg_conf = sum(confidences) / max(len(confidences), 1)
+        density = min(len(words), 80) / 80.0
+        return (avg_conf / 100.0) + (alpha_words * 0.025) + (number_words * 0.01) + (keyword_hits * 0.12) + density * 0.2
+    except Exception:
+        return 0.0
+
+
+def _choose_rotation_by_ocr(img, degrees_candidates):
+    scores = [(degrees, _ocr_readability_score_for_rotation(img, degrees)) for degrees in degrees_candidates]
+    scores.sort(key=lambda item: item[1], reverse=True)
+    if not scores or scores[0][1] <= 0.20:
+        return None
+    second = scores[1][1] if len(scores) > 1 else 0.0
+    if scores[0][1] >= second + 0.10:
+        return scores[0][0], scores[0][1]
+    return None
+
+
+def _orient_invoice_upright(img):
+    """Rotate cropped documents so printed text is horizontal and the receipt top is at 12 o'clock."""
+    try:
+        out = img.convert("RGB")
+        w, h = out.size
+        osd_degrees = _detect_tesseract_rotation_degrees(out)
+        if osd_degrees in (90, 180, 270):
+            return out.rotate(360 - osd_degrees, expand=True), f"tesseract_osd_{osd_degrees}"
+
+        if w > h * 1.08:
+            ocr_choice = _choose_rotation_by_ocr(out, (90, 270))
+            if ocr_choice is not None:
+                best_degrees, _ = ocr_choice
+                return out.rotate(best_degrees, expand=True), f"ocr_landscape_{best_degrees}"
+            candidates = [(90, _text_projection_score_for_rotation(out, 90)), (270, _text_projection_score_for_rotation(out, 270))]
+            best_degrees, best_score = max(candidates, key=lambda item: item[1])
+            if best_score <= 0:
+                best_degrees = 270
+            return out.rotate(best_degrees, expand=True), f"landscape_{best_degrees}"
+
+        if h >= w:
+            ocr_choice = _choose_rotation_by_ocr(out, (0, 180))
+            if ocr_choice is not None:
+                best_degrees, _ = ocr_choice
+                if best_degrees:
+                    return out.rotate(best_degrees, expand=True), f"ocr_portrait_{best_degrees}"
+                return out, "ocr_portrait_0"
+            candidates = [
+                (0, _text_projection_score_for_rotation(out, 0)),
+                (180, _text_projection_score_for_rotation(out, 180)),
+            ]
+            best_degrees, best_score = max(candidates, key=lambda item: item[1])
+            if best_degrees == 180 and best_score > candidates[0][1] + 0.04:
+                return out.rotate(180, expand=True), "portrait_180"
+        return out, "none"
+    except Exception:
+        return img, "orientation_failed"
+
+
+def prepare_invoice_image(img):
+    """Return a cropped, deskewed, contrast-enhanced invoice image for OCR/vision."""
+    if Image is None:
+        return img
+    try:
+        src = ImageOps.exif_transpose(img) if ImageOps is not None else img
+        src = src.convert("RGB")
+        warped = _perspective_warp_document(src)
+        if warped is None:
+            warped = _crop_rechnung_region(src)
+        out = _enhance_invoice_image(warped)
+        out = _trim_background_edges(out)
+        out = _trim_background_edges(out)
+        out, _ = _orient_invoice_upright(out)
+
+        w, h = out.size
+        max_side = 2600
+        if max(w, h) > max_side:
+            scale = max_side / float(max(w, h))
+            resample = _pil_lanczos()
+            if resample is not None:
+                out = out.resize((max(1, int(w * scale)), max(1, int(h * scale))), resample=resample)
+        return out
+    except Exception:
+        return img
+
+
+def prepare_invoice_image_file_inplace(datei_pfad: str) -> dict:
+    """
+    Kırpma/düzeltmeyi upload edilen resme uygular.
+    Güvenli değilse dosyayı değiştirmez; sonuç debug için kısa meta döndürür.
+    """
+    result = {"applied": False, "reason": "", "original_size": None, "processed_size": None}
+    if Image is None or not os.path.isfile(datei_pfad):
+        result["reason"] = "image_library_or_file_missing"
+        return result
+    try:
+        ext = os.path.splitext(datei_pfad)[1].lower()
+        if ext in (".heic", ".heif"):
+            result["reason"] = "heic_left_original_runtime_preprocess"
+            return result
+        with Image.open(datei_pfad) as raw:
+            original = ImageOps.exif_transpose(raw) if ImageOps is not None else raw
+            original = original.convert("RGB")
+            ow, oh = original.size
+            result["original_size"] = [ow, oh]
+            processed = prepare_invoice_image(original)
+            pw, ph = processed.size
+            result["processed_size"] = [pw, ph]
+
+            if pw < max(120, int(ow * 0.12)) or ph < max(120, int(oh * 0.12)):
+                result["reason"] = "processed_image_too_small"
+                return result
+
+            out = BytesIO()
+            if ext == ".png":
+                processed.save(out, format="PNG", optimize=True)
+            elif ext == ".webp":
+                processed.save(out, format="WEBP", quality=95, method=6)
+            else:
+                processed.save(out, format="JPEG", quality=95, optimize=True)
+
+        with open(datei_pfad, "wb") as f:
+            f.write(out.getvalue())
+        result["applied"] = True
+        result["reason"] = "ok"
+        return result
+    except Exception as ex:
+        result["reason"] = f"exception:{type(ex).__name__}"
+        return result
+
+
+def _normalize_rate_string(raw) -> str:
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    s = s.replace("%", "").replace(" ", "").replace(",", ".")
+    match = re.search(r"\d+(?:\.\d+)?", s)
+    if not match:
+        return ""
+    try:
+        value = float(match.group(0))
+    except Exception:
+        return ""
+    if abs(value - round(value)) < 1e-9:
+        return str(int(round(value)))
+    return str(round(value, 2)).replace(".", ",")
+
+
 def _standard_response(ergebnis: dict) -> dict:
     typ = str(ergebnis.get("rechnung_typ", "eingang") or "eingang").strip().lower()
     if typ not in ("eingang", "ausgang"):
         typ = "eingang"
+    mwst_satz = _normalize_rate_string(ergebnis.get("mwst_satz", ""))
+    mwst_satz_1 = _normalize_rate_string(ergebnis.get("mwst_satz_1", ergebnis.get("mwst_satz", "")))
+    mwst_satz_2 = _normalize_rate_string(ergebnis.get("mwst_satz_2", ""))
     return {
         "lieferant": ergebnis.get("lieferant", "Unbekannt"),
+        "adresse": ergebnis.get("adresse", ergebnis.get("anschrift", "")),
         "rechnung_typ": typ,
         "rechnungsdatum": ergebnis.get("rechnungsdatum", ""),
+        "uhrzeit": ergebnis.get("uhrzeit", ""),
         "kategorie": ergebnis.get("kategorie", "Sonstige"),
         "netto_betrag": ergebnis.get("netto_betrag", "0"),
-        "mwst_satz": ergebnis.get("mwst_satz", ""),
+        "mwst_satz": mwst_satz,
         "mwst_betrag": ergebnis.get("mwst_betrag", "0"),
         "brutto_betrag": ergebnis.get("brutto_betrag", "0"),
+        "gesamt_betrag": ergebnis.get("gesamt_betrag", ergebnis.get("brutto_betrag", "0")),
         "waehrung": ergebnis.get("waehrung", "EUR"),
         "zahlungsart": ergebnis.get("zahlungsart", ""),
         "zahlungsmittel": ergebnis.get("zahlungsmittel", ""),
+        "karten_nr": ergebnis.get("karten_nr", ergebnis.get("kartennr", "")),
+        "t_id": ergebnis.get("t_id", ergebnis.get("tid", "")),
+        "beleg_nr": ergebnis.get("beleg_nr", ergebnis.get("belegnummer", "")),
+        "vu_nummer": ergebnis.get("vu_nummer", ergebnis.get("vu_nummer", "")),
+        "ust_id_nr": ergebnis.get("ust_id_nr", ergebnis.get("steuer_id", "")),
         "belegnummer": ergebnis.get("belegnummer", ""),
         "rechnungsnummer": ergebnis.get("rechnungsnummer", ""),
         "kundennummer": ergebnis.get("kundennummer", ""),
@@ -471,6 +1010,12 @@ def _standard_response(ergebnis: dict) -> dict:
         "iban_maskiert": ergebnis.get("iban_maskiert", ""),
         "faelligkeitsdatum": ergebnis.get("faelligkeitsdatum", ""),
         "notizen": ergebnis.get("notizen", ""),
+        "mwst_satz_1": mwst_satz_1,
+        "mwst_betrag_1": ergebnis.get("mwst_betrag_1", ergebnis.get("mwst_betrag", "")),
+        "netto_betrag_1": ergebnis.get("netto_betrag_1", ergebnis.get("netto_betrag", "")),
+        "mwst_satz_2": mwst_satz_2,
+        "mwst_betrag_2": ergebnis.get("mwst_betrag_2", ""),
+        "netto_betrag_2": ergebnis.get("netto_betrag_2", ""),
     }
 
 
@@ -837,9 +1382,151 @@ def _normalize_with_text(ergebnis: dict, text: str) -> dict:
     return _standard_response(out)
 
 
+def _sanitize_noisy_id_fields(ergebnis: dict) -> dict:
+    out = dict(ergebnis)
+    fields = [
+        "beleg_nr", "belegnummer", "rechnungsnummer", "kundennummer",
+        "steuer_id", "iban_maskiert", "ust_id_nr", "vu_nummer"
+    ]
+    for key in fields:
+        raw = str(out.get(key, "") or "").strip()
+        if not raw:
+            out[key] = ""
+            continue
+        lowered = raw.lower()
+        if lowered in ("n/a", "na", "unknown", "unbekannt"):
+            out[key] = ""
+            continue
+        if len(raw) > 40 or raw.count("#") >= 3:
+            out[key] = ""
+    return out
+
+
+def _to_de_money(raw) -> str:
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    s = s.replace(" ", "").replace(".", "").replace(",", ".")
+    try:
+        n = float(s)
+    except Exception:
+        return ""
+    return f"{n:.2f}".replace(".", ",")
+
+
+def _to_de_rate(raw) -> str:
+    return _normalize_rate_string(raw)
+
+
+def _to_float_de(raw) -> float:
+    s = str(raw or "").strip().replace("%", "").strip()
+    if not s:
+        return 0.0
+    if "." in s and "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except Exception:
+        return 0.0
+
+
+def _tax_buckets_plausible(buckets: dict, gross_raw) -> bool:
+    gross = _to_float_de(gross_raw)
+    if gross <= 0:
+        return False
+
+    n1 = _to_float_de(buckets.get("netto_betrag_1"))
+    m1 = _to_float_de(buckets.get("mwst_betrag_1"))
+    r1 = _to_float_de(buckets.get("mwst_satz_1"))
+    n2 = _to_float_de(buckets.get("netto_betrag_2"))
+    m2 = _to_float_de(buckets.get("mwst_betrag_2"))
+    r2 = _to_float_de(buckets.get("mwst_satz_2"))
+
+    has2 = n2 > 0 and m2 > 0 and r2 > 0
+    if has2:
+        total = n1 + m1 + n2 + m2
+        if abs(total - gross) > 15.0:
+            return False
+        if r1 > 0 and abs((n1 * (r1 / 100.0)) - m1) > 0.25:
+            return False
+        if r2 > 0 and abs((n2 * (r2 / 100.0)) - m2) > 0.25:
+            return False
+        return True
+
+    # single bucket mode
+    if n1 <= 0 or m1 < 0 or r1 <= 0:
+        return False
+    if abs((n1 + m1) - gross) > 15.0:
+        return False
+    if abs((n1 * (r1 / 100.0)) - m1) > 0.25:
+        return False
+    return True
+
+
+def _repair_tax_bucket_amount_order(buckets: dict) -> dict:
+    out = dict(buckets)
+    for suffix in ("1", "2"):
+        rate = _to_float_de(out.get(f"mwst_satz_{suffix}"))
+        net = _to_float_de(out.get(f"netto_betrag_{suffix}"))
+        vat = _to_float_de(out.get(f"mwst_betrag_{suffix}"))
+        if rate <= 0 or net <= 0 or vat <= 0:
+            continue
+
+        current_delta = abs((net * (rate / 100.0)) - vat)
+        swapped_delta = abs((vat * (rate / 100.0)) - net)
+        if swapped_delta + 0.05 < current_delta:
+            out[f"netto_betrag_{suffix}"], out[f"mwst_betrag_{suffix}"] = (
+                out.get(f"mwst_betrag_{suffix}", ""),
+                out.get(f"netto_betrag_{suffix}", ""),
+            )
+    return out
+
+
+def _merge_tax_buckets(base: dict, buckets: dict) -> dict:
+    out = dict(base)
+    buckets = _repair_tax_bucket_amount_order(buckets)
+    if not _tax_buckets_plausible(buckets, base.get("brutto_betrag", "")):
+        return out
+
+    m1 = _to_de_money(buckets.get("mwst_betrag_1"))
+    r1 = _to_de_rate(buckets.get("mwst_satz_1"))
+    n1 = _to_de_money(buckets.get("netto_betrag_1"))
+    m2 = _to_de_money(buckets.get("mwst_betrag_2"))
+    r2 = _to_de_rate(buckets.get("mwst_satz_2"))
+    n2 = _to_de_money(buckets.get("netto_betrag_2"))
+
+    out["mwst_betrag_1"] = m1
+    out["mwst_satz_1"] = r1
+    out["netto_betrag_1"] = n1
+    # If second bucket is incomplete or duplicated, force it empty.
+    has_any_2 = bool(m2 or r2 or n2)
+    has_all_2 = bool(m2 and r2 and n2)
+    duplicated_2 = bool(has_all_2 and r1 == r2 and m1 == m2 and n1 == n2)
+    if (not has_all_2 and has_any_2) or duplicated_2:
+        m2 = ""
+        r2 = ""
+        n2 = ""
+
+    out["mwst_betrag_2"] = m2
+    out["mwst_satz_2"] = r2
+    out["netto_betrag_2"] = n2
+
+    # Keep primary legacy fields aligned with bucket-1.
+    if m1:
+        out["mwst_betrag"] = m1
+    if r1:
+        out["mwst_satz"] = r1
+    if n1:
+        out["netto_betrag"] = n1
+    return out
+
+
 def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "openrouter", api_model: str = "") -> dict:
-    global _LAST_VISION_DEBUG
+    global _LAST_VISION_DEBUG, _LAST_VISION_TRACE
     _LAST_VISION_DEBUG = ""
+    _LAST_VISION_TRACE = {}
     if not os.path.isfile(datei_pfad):
         return {}
 
@@ -859,14 +1546,13 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
     with open(datei_pfad, "rb") as f:
         raw_bytes = f.read()
 
-    # Optional crop to focus receipt/invoice region before sending to vision model.
+    # Focus and straighten receipt/invoice region before sending to vision model.
     encoded = base64.b64encode(raw_bytes).decode("ascii")
     encoded_chunks = [encoded]
     if Image is not None:
         try:
-            from io import BytesIO
             with Image.open(BytesIO(raw_bytes)) as img:
-                cropped = _crop_rechnung_region(img)
+                cropped = prepare_invoice_image(img)
                 w, h = cropped.size
                 buf = BytesIO()
                 cropped.save(buf, format="PNG")
@@ -942,19 +1628,26 @@ WICHTIG:
 Gib NUR JSON zuruck. Keine Erklarungen.
 """
 
-    vision_model = (
-        (api_model or "").strip()
-        or ("gpt-5.4-mini" if api_provider == "openai" else "openai/gpt-5.4-mini")
-    )
+    selected_model = _normalize_api_model(api_provider, api_model)
+    is_4o = any(x in selected_model.lower() for x in ["gpt-4o", "gpt-4-o"])
+    
     candidate_models = []
-    for m in [
-        vision_model,
-        ("gpt-5.4-mini" if api_provider == "openai" else "openai/gpt-5.4-mini"),
-        ("gpt-5.4-nano" if api_provider == "openai" else "openai/gpt-5.4-nano"),
-        ("gpt-4o-mini" if api_provider == "openai" else "openai/gpt-4o-mini"),
-    ]:
-        if m and m not in candidate_models:
-            candidate_models.append(m)
+    if selected_model:
+        if "5.4" in selected_model or "gpt-5" in selected_model:
+            pass
+        else:
+            candidate_models.append(selected_model)
+
+    if api_provider == "openai":
+        for fb in ["gpt-4o-mini", "gpt-4o"]:
+            if fb not in candidate_models:
+                candidate_models.append(fb)
+    else:
+        for fb in ["openai/gpt-4o-mini", "openai/gpt-4o"]:
+            if fb not in candidate_models:
+                candidate_models.append(fb)
+        
+    vision_model = candidate_models[0]
 
     if api_provider == "openai":
         url = "https://api.openai.com/v1/chat/completions"
@@ -983,8 +1676,53 @@ Gib NUR JSON zuruck. Keine Erklarungen.
                 }
             ],
             "temperature": 0,
-            "max_tokens": 700,
+            "max_tokens": 2000,
+            "response_format": {"type": "json_object"},
         }
+
+    def _vision_tax_payload(prompt_text: str, image_b64: str, model_name: str):
+        return {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": SYSTEM_ROLE},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt_text},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}", "detail": "high"}},
+                    ],
+                }
+            ],
+            "temperature": 0,
+            "max_tokens": 400,
+            "response_format": {"type": "json_object"},
+        }
+
+    def _payload_debug_summary(payload: dict) -> dict:
+        try:
+            msgs = payload.get("messages", [])
+            roles = [m.get("role", "") for m in msgs if isinstance(m, dict)]
+            image_detail = ""
+            for m in msgs:
+                if not isinstance(m, dict):
+                    continue
+                content = m.get("content")
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            image_detail = str(((part.get("image_url") or {}) if isinstance(part.get("image_url"), dict) else {}).get("detail", ""))
+                            break
+            return {
+                "model": payload.get("model", ""),
+                "temperature": payload.get("temperature", 0),
+                "max_tokens": payload.get("max_tokens", 0),
+                "response_format": payload.get("response_format", {}),
+                "roles": roles,
+                "system_role": SYSTEM_ROLE,
+                "image_detail": image_detail,
+            }
+        except Exception:
+            return {}
 
     def _vision_extract_date() -> str:
         date_prompt = """
@@ -1053,37 +1791,95 @@ WICHTIG:
             return ""
 
     direct_parse_prompt = f"""
-Analysiere dieses Rechnungs-/Belegbild DIREKT und gib NUR JSON im folgenden Schema zurueck:
+Analysiere dieses Belegbild DIREKT und gib NUR JSON im folgenden Schema zurueck:
 {{
   "lieferant": "string",
+  "adresse": "string",
   "rechnung_typ": "eingang|ausgang",
   "rechnungsdatum": "YYYY-MM-DD oder leer",
+  "uhrzeit": "HH:MM oder leer",
   "kategorie": "eine aus {list(STANDARDS_KATEGORIEN.keys())}",
   "netto_betrag": "string",
   "mwst_satz": "string",
   "mwst_betrag": "string",
   "brutto_betrag": "string",
+  "gesamt_betrag": "string",
   "waehrung": "string",
   "zahlungsart": "string",
   "zahlungsmittel": "string",
+  "karten_nr": "string",
+  "t_id": "string",
+  "beleg_nr": "string",
+  "vu_nummer": "string",
+  "ust_id_nr": "string",
   "belegnummer": "string",
   "rechnungsnummer": "string",
   "kundennummer": "string",
   "steuer_id": "string",
   "iban_maskiert": "string",
   "faelligkeitsdatum": "YYYY-MM-DD oder leer",
-  "notizen": "string"
+  "notizen": "string",
+  "mwst_satz_1": "string",
+  "mwst_betrag_1": "string",
+  "netto_betrag_1": "string",
+  "mwst_satz_2": "string",
+  "mwst_betrag_2": "string",
+  "netto_betrag_2": "string"
 }}
 Keine Erklaerung, kein Markdown, nur JSON.
 WICHTIG:
+- KEINE HALLUZINATION: Nur Werte zurückgeben, die im Bild klar lesbar sind.
+- Wenn du nicht sicher bist oder ein Wert nicht eindeutig lesbar ist: leerer String.
+- Nichts raten, nichts ergänzen, nichts aus Kontext ableiten.
 - Wenn ein Feld nicht lesbar ist, gib leeren String.
 - Zahlenwerte exakt aus dem Beleg, keine Schätzung.
+- KEINE Fantasie-/Platzhalterwerte wie "N/A", "unknown", "###", "H#H#...". In solchen Fällen: leerer String.
+- `beleg_nr`, `belegnummer`, `rechnungsnummer`, `kundennummer`, `steuer_id`, `iban_maskiert`, `ust_id_nr`, `vu_nummer`:
+  - nur kurze, echte Werte übernehmen;
+  - wenn der Wert unklar, verrauscht oder sehr lang ist (z.B. > 40 Zeichen), leerer String zurückgeben.
+- Wenn mehrere Steuerzeilen vorhanden sind:
+  - Zeile mit 19% (oder dem höheren Satz) in *_1.
+  - Zeile mit 7% (oder dem niedrigeren Satz) in *_2.
+- WICHTIG (Netto vs. MwSt Spalten):
+  - Der Netto-Betrag ist IMMER wesentlich größer als der MwSt-Betrag (ca. 5-mal so groß bei 19% und ca. 14-mal so groß bei 7%).
+  - Wenn du z.B. die Zahlen "100,82" und "19,16" für 19% siehst, dann ist "100,82" der Netto-Betrag (netto_betrag_1) und "19,16" der MwSt-Betrag (mwst_betrag_1).
+  - Wenn du z.B. die Zahlen "12,87" und "0,90" für 7% siehst, dann ist "12,87" der Netto-Betrag (netto_betrag_2) und "0,90" der MwSt-Betrag (mwst_betrag_2).
+  - Vertausche Netto und MwSt NIEMALS!
 - KATEGORIE MUSS nach gekauftem Produkt/Verwendungszweck erfolgen, NICHT nach Lieferantenname.
 - Beispiele:
   - Airfryer/Küchengerät/Lebensmittelnahe Ausgaben => "Gastronomie"
+  - Lebensmittel, Getränke, Kaffee, Cappuccino, Sandwich, Fruchtaufstrich, Proteinpulver => "Gastronomie"
   - Auto, Tanken, Parken, Maut, Fahrkarten, Mobilität => "Transport"
   - IT/Elektronik/Software/Lizenzen => "Software & Hardware"
 - Rückgabe wie ein erfahrener Buchhalter: relevante Belegdaten vollständig extrahieren.
+"""
+
+    tax_only_prompt = """
+Lies NUR die MwSt-Aufteilung im Summenbereich des Belegs.
+Nutze ausschließlich Zeilen, die Steuern ausweisen (z.B. "19%" / "7%" oder "A" / "B").
+
+Gib NUR dieses JSON zurück:
+{
+  "mwst_betrag_1": "string",
+  "mwst_satz_1": "string",
+  "netto_betrag_1": "string",
+  "mwst_betrag_2": "string",
+  "mwst_satz_2": "string",
+  "netto_betrag_2": "string"
+}
+
+Regeln:
+- KEINE HALLUZINATION: Nur Zahlen zurückgeben, die exakt im Bild sichtbar sind.
+- Wenn ein Wert nicht eindeutig lesbar ist: leerer String.
+- Wenn 2 Steuerzeilen vorhanden sind: _1 ist die 19%-Zeile (oder der höhere Satz), _2 ist die 7%-Zeile (oder der niedrigere Satz).
+- WICHTIG (Spaltenerkennung Netto vs. MwSt):
+  - Der Netto-Betrag ist mathematisch immer wesentlich GRÖSSER als der MwSt-Betrag.
+  - Bei 19%: Netto ist ca. 5x größer als MwSt (z.B. Netto 100,82 und MwSt 19,16. Also netto_betrag_1="100,82" und mwst_betrag_1="19,16").
+  - Bei 7%: Netto is ca. 14x größer als MwSt (z.B. Netto 12,87 und MwSt 0,90. Also netto_betrag_2="12,87" und mwst_betrag_2="0,90").
+  - Vertausche Netto-Betrag und MwSt-Betrag NIEMALS!
+- Zahlen exakt vom Beleg übernehmen, Format mit Komma (z.B. 19,16).
+- Wenn ein Feld wirklich nicht lesbar ist, leerer String.
+- Keine weiteren Keys, keine Erklärungen.
 """
 
     def _extract_json_content(raw: str):
@@ -1102,25 +1898,61 @@ WICHTIG:
             direct_payload = _vision_payload(direct_parse_prompt, encoded, model_name)
             direct_resp = requests.post(url, headers=headers, json=direct_payload, timeout=45)
             direct_json = direct_resp.json()
+            _LAST_VISION_TRACE = {
+                "provider": api_provider,
+                "model": model_name,
+                "status_code": direct_resp.status_code,
+                "response_json": direct_json,
+                "request_main": _payload_debug_summary(direct_payload),
+            }
             if "error" in direct_json:
                 err_msg = str(direct_json.get("error", ""))[:300]
                 _LAST_VISION_DEBUG = f"model={model_name} status={direct_resp.status_code} api_error={err_msg}"
+                _LAST_VISION_TRACE["error"] = err_msg
                 continue
             if "choices" not in direct_json:
                 _LAST_VISION_DEBUG = f"model={model_name} status={direct_resp.status_code} no_choices body={str(direct_json)[:450]}"
+                _LAST_VISION_TRACE["error"] = "no_choices"
                 continue
             direct_raw = _extract_json_content(direct_json["choices"][0]["message"]["content"])
+            _LAST_VISION_TRACE["raw_message_content"] = direct_json["choices"][0]["message"]["content"]
+            _LAST_VISION_TRACE["raw_json_text"] = direct_raw
             try:
-                parsed_direct = _standard_response(json.loads(direct_raw))
+                parsed_raw = json.loads(direct_raw)
+                _LAST_VISION_TRACE["parsed_raw_json"] = parsed_raw
+                parsed_direct = _standard_response(parsed_raw)
+                parsed_direct = _sanitize_noisy_id_fields(parsed_direct)
+                _LAST_VISION_TRACE["parsed_standardized_json"] = parsed_direct
             except json.JSONDecodeError as json_ex:
                 _LAST_VISION_DEBUG = f"model={model_name} json_parse_error={repr(json_ex)} raw={direct_raw[:200]}"
+                _LAST_VISION_TRACE["error"] = f"json_parse_error: {repr(json_ex)}"
                 continue
             parsed_direct = _kategorie_nach_produktlogik(parsed_direct, "")
+            # Hard requirement: extract VAT buckets in a dedicated, minimal pass.
+            tax_payload = _vision_tax_payload(tax_only_prompt, encoded, model_name)
+            _LAST_VISION_TRACE["request_tax"] = _payload_debug_summary(tax_payload)
+            tax_resp = requests.post(url, headers=headers, json=tax_payload, timeout=35)
+            tax_json = tax_resp.json()
+            if "choices" in tax_json:
+                tax_raw = _extract_json_content(tax_json["choices"][0]["message"]["content"])
+                try:
+                    tax_parsed = json.loads(tax_raw)
+                    parsed_direct = _merge_tax_buckets(parsed_direct, tax_parsed)
+                    _LAST_VISION_TRACE["tax_raw_json_text"] = tax_raw
+                    _LAST_VISION_TRACE["tax_parsed_json"] = tax_parsed
+                except Exception:
+                    _LAST_VISION_TRACE["tax_raw_json_text"] = tax_raw
+            _LAST_VISION_TRACE["parsed_final_json"] = parsed_direct
             if parsed_direct:
                 _LAST_VISION_DEBUG = f"model={model_name} status={direct_resp.status_code} ok"
                 return parsed_direct
         except Exception as ex:
             _LAST_VISION_DEBUG = f"model={model_name} exception={repr(ex)}"
+            _LAST_VISION_TRACE = {
+                "provider": api_provider,
+                "model": model_name,
+                "error": f"exception: {repr(ex)}",
+            }
             continue
     return {}
 
@@ -1182,12 +2014,13 @@ Rechnungstext:
         # Reliability fix: for image extraction force direct OpenAI path when an OpenAI key exists.
         vision_provider = provider
         vision_key = verwendeter_key
-        vision_model = (api_model or "").strip()
+        vision_model = _normalize_api_model(vision_provider, api_model)
         if API_KEY_OPENAI:
             vision_provider = "openai"
             vision_key = API_KEY_OPENAI
-            if not vision_model or vision_model.startswith("openai/"):
-                vision_model = "gpt-5.4-mini"
+            vision_model = _normalize_api_model(vision_provider, vision_model)
+            if vision_model.startswith("openai/"):
+                vision_model = vision_model.removeprefix("openai/")
         vision_result = _vision_klassifizieren(datei_pfad, vision_key, vision_provider, vision_model)
         if vision_result:
             return vision_result
@@ -1202,7 +2035,7 @@ Rechnungstext:
             "Content-Type": "application/json",
         }
         data = {
-            "model": api_model or "gpt-5.4-nano",
+            "model": _normalize_api_model(provider, api_model) if api_model else "gpt-4o-mini",
             "messages": [
                 {"role": "system", "content": SYSTEM_ROLE},
                 {"role": "user", "content": prompt}
@@ -1216,7 +2049,7 @@ Rechnungstext:
             "Content-Type": "application/json",
         }
         data = {
-            "model": api_model or "openai/gpt-5.4-nano",
+            "model": _normalize_api_model(provider, api_model) if api_model else "openai/gpt-4o-mini",
             "messages": [
                 {"role": "system", "content": SYSTEM_ROLE},
                 {"role": "user", "content": prompt}

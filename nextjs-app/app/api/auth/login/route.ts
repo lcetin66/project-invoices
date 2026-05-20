@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { applySessionCookie, signSession, verifyCredentials } from "@/lib/auth";
+import { t } from "@/lang";
 
 export const runtime = "nodejs";
 
@@ -11,7 +12,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const user = await verifyCredentials(username, password);
     if (!user) {
-      return NextResponse.json({ ok: false, message: "Benutzername oder Passwort ist falsch." }, { status: 401 });
+      return NextResponse.json({ ok: false, message: t.api.invalidLogin }, { status: 401 });
     }
 
     const token = await signSession(user);
@@ -19,6 +20,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     applySessionCookie(response, token);
     return response;
   } catch {
-    return NextResponse.json({ ok: false, message: "Login fehlgeschlagen." }, { status: 500 });
+    return NextResponse.json({ ok: false, message: t.api.loginFailed }, { status: 500 });
   }
 }

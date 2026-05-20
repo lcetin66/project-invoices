@@ -3,12 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import type { Category } from "@/lib/types";
-
-type AiOption = {
-  label: string;
-  provider: string;
-  model: string;
-};
+import { t, txt } from "@/lang";
 
 type StatsPayload = {
   totals: {
@@ -41,10 +36,6 @@ type StatsPayload = {
 
 export function AdminClient() {
   const [categories, setCategories] = useState<Category[]>([]);
-  const [aiOptions, setAiOptions] = useState<Record<string, AiOption>>({});
-  const [aiService, setAiService] = useState("openrouter_openai");
-  const [aiKey, setAiKey] = useState("");
-  const [maskedKey, setMaskedKey] = useState("Nicht gesetzt");
 
   const [stats, setStats] = useState<StatsPayload | null>(null);
   const [insights, setInsights] = useState<string[]>([]);
@@ -57,26 +48,18 @@ export function AdminClient() {
   const [debugMonitorEnabled, setDebugMonitorEnabled] = useState(true);
 
   async function loadAll(): Promise<void> {
-    const [catRes, aiRes, statsRes] = await Promise.all([
+    const [catRes, statsRes] = await Promise.all([
       fetch("/api/categories", { cache: "no-store" }),
-      fetch("/api/settings/ai", { cache: "no-store" }),
       fetch("/api/stats", { cache: "no-store" })
     ]);
 
     const catData = (await catRes.json()) as { categories?: Category[] };
-    const aiData = (await aiRes.json()) as {
-      settings?: { ai_service?: string; masked_api_key?: string };
-      options?: Record<string, AiOption>;
-    };
     const statsData = (await statsRes.json()) as {
       stats?: StatsPayload;
       insights?: string[];
     };
 
     setCategories(Array.isArray(catData.categories) ? catData.categories : []);
-    setAiOptions(aiData.options ?? {});
-    setAiService(aiData.settings?.ai_service ?? "openrouter_openai");
-    setMaskedKey(aiData.settings?.masked_api_key ?? "Nicht gesetzt");
     setStats(statsData.stats ?? null);
     setInsights(Array.isArray(statsData.insights) ? statsData.insights : []);
   }
@@ -116,10 +99,10 @@ export function AdminClient() {
     });
     const data = (await res.json()) as { ok?: boolean; message?: string };
     if (!res.ok || !data.ok) {
-      setStatus({ ok: false, text: data.message ?? "Kategorie konnte nicht erstellt werden." });
+      setStatus({ ok: false, text: data.message ?? t.admin.createFailed });
       return;
     }
-    setStatus({ ok: true, text: "Kategorie wurde erstellt." });
+    setStatus({ ok: true, text: t.admin.created });
     setNewCategory({ name: "", beschreibung: "", farbe: "#6366F1" });
     await loadAll();
   }
@@ -131,18 +114,18 @@ export function AdminClient() {
       body: JSON.stringify({ action: "deactivate" })
     });
     const data = (await res.json()) as { ok?: boolean; message?: string };
-    setStatus({ ok: Boolean(data.ok), text: data.message ?? "Kategorie wurde deaktiviert." });
+    setStatus({ ok: Boolean(data.ok), text: data.message ?? t.admin.deactivated });
     await loadAll();
   }
 
   async function removeCategory(categoryId: number): Promise<void> {
-    if (!confirm("Kategorie wirklich löschen?")) {
+    if (!confirm(t.invoices.deleteConfirm)) {
       return;
     }
 
     const res = await fetch(`/api/categories/${categoryId}`, { method: "DELETE" });
     const data = (await res.json()) as { ok?: boolean; message?: string };
-    setStatus({ ok: Boolean(data.ok), text: data.message ?? "Kategorie gelöscht." });
+    setStatus({ ok: Boolean(data.ok), text: data.message ?? t.admin.deleted });
     await loadAll();
   }
 
@@ -157,26 +140,7 @@ export function AdminClient() {
       body: JSON.stringify({ categoryId, monthlyBudget })
     });
     const data = (await res.json()) as { ok?: boolean; message?: string };
-    setStatus({ ok: Boolean(data.ok), text: data.message ?? "Budget gespeichert." });
-    await loadAll();
-  }
-
-  async function saveAi(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    const res = await fetch("/api/settings/ai", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ service: aiService, apiKey: aiKey })
-    });
-    const data = (await res.json()) as {
-      ok?: boolean;
-      message?: string;
-      settings?: { masked_api_key?: string };
-    };
-
-    setStatus({ ok: Boolean(data.ok), text: data.message ?? "AI-Einstellungen gespeichert." });
-    setMaskedKey(data.settings?.masked_api_key ?? maskedKey);
-    setAiKey("");
+    setStatus({ ok: Boolean(data.ok), text: data.message ?? t.admin.budgetSaved });
     await loadAll();
   }
 
@@ -185,10 +149,10 @@ export function AdminClient() {
       {status ? (
         <div className="popup-overlay" id="statusPopup">
           <div className="popup-card">
-            <h3>{status.ok ? "Erfolg" : "Warnung"}</h3>
+            <h3>{status.ok ? t.common.success : t.common.warning}</h3>
             <p>{status.text}</p>
             <button type="button" className="btn btn-primary" onClick={() => setStatus(null)}>
-              OK
+              {t.common.ok}
             </button>
           </div>
         </div>
@@ -197,10 +161,10 @@ export function AdminClient() {
       <div className="admin-layout">
         <aside className="admin-sidebar">
           <div className="admin-card">
-            <h3>Kategorien verwalten</h3>
+            <h3>{t.admin.categoryManage}</h3>
             <form className="kat-form" onSubmit={(event) => void createCategory(event)}>
               <div className="form-group">
-                <label>Kategoriename</label>
+                <label>{t.admin.categoryName}</label>
                 <input
                   value={newCategory.name}
                   onChange={(event) => setNewCategory((prev) => ({ ...prev, name: event.target.value }))}
@@ -208,14 +172,14 @@ export function AdminClient() {
                 />
               </div>
               <div className="form-group">
-                <label>Beschreibung</label>
+                <label>{t.admin.description}</label>
                 <input
                   value={newCategory.beschreibung}
                   onChange={(event) => setNewCategory((prev) => ({ ...prev, beschreibung: event.target.value }))}
                 />
               </div>
               <div className="form-group">
-                <label>Farbe</label>
+                <label>{t.admin.color}</label>
                 <input
                   type="color"
                   className="color-picker"
@@ -224,15 +188,15 @@ export function AdminClient() {
                 />
               </div>
               <button className="btn btn-primary btn-full" type="submit">
-                + Neue Kategorie
+                {t.admin.newCategory}
               </button>
             </form>
 
             <form className="kat-form" onSubmit={(event) => void saveBudget(event)}>
               <div className="form-group">
-                <label>Kategorie Budget</label>
+                <label>{t.admin.categoryBudget}</label>
                 <select value={budgetCategoryId} onChange={(event) => setBudgetCategoryId(event.target.value)} required>
-                  <option value="">Bitte wählen</option>
+                  <option value="">{t.common.choose}</option>
                   {categories.map((cat) => (
                     <option key={cat.id} value={cat.id}>
                       {cat.name}
@@ -241,11 +205,11 @@ export function AdminClient() {
                 </select>
               </div>
               <div className="form-group">
-                <label>Monatsbudget (EUR)</label>
+                <label>{t.admin.monthlyBudget}</label>
                 <input value={budgetAmount} onChange={(event) => setBudgetAmount(event.target.value)} required />
               </div>
               <button className="btn btn-outline btn-full" type="submit">
-                Budget speichern
+                {t.admin.saveBudget}
               </button>
             </form>
 
@@ -254,13 +218,13 @@ export function AdminClient() {
                 <div className="kat-item" key={cat.id}>
                   <span className="kat-farbe" style={{ background: cat.farbe }} />
                   <span className="kat-name">{cat.name}</span>
-                  <button className="btn-icon" type="button" title="Deaktivieren" onClick={() => void deactivateCategory(cat.id)}>
+                  <button className="btn-icon" type="button" title={t.admin.deactivate} onClick={() => void deactivateCategory(cat.id)}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <circle cx="12" cy="12" r="10" />
                       <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
                     </svg>
                   </button>
-                  <button className="btn-icon btn-loeschen" type="button" title="Löschen" onClick={() => void removeCategory(cat.id)}>
+                  <button className="btn-icon btn-loeschen" type="button" title={t.admin.delete} onClick={() => void removeCategory(cat.id)}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <polyline points="3 6 5 6 21 6" />
                       <path d="M19 6l-1 14H6L5 6m3 0V4a1 1 0 011-1h6a1 1 0 011 1v2" />
@@ -272,12 +236,12 @@ export function AdminClient() {
 
             <div className="admin-debug-tools">
               <button type="button" className="btn btn-outline btn-full" onClick={() => setDebugToolsOpen((prev) => !prev)}>
-                {debugToolsOpen ? "Debug Araçlarını Kapat" : "Debug Araçlarını Aç"}
+                {debugToolsOpen ? t.admin.debugToolsClose : t.admin.debugToolsOpen}
               </button>
               {debugToolsOpen ? (
                 <div className="admin-debug-tools-panel">
                   <div className="debug-switch-wrap admin-switch-row">
-                    <span className="debug-switch-label">Dashboard Debug Monitor</span>
+                    <span className="debug-switch-label">{t.admin.dashboardDebug}</span>
                     <button
                       type="button"
                       className={`debug-switch ${debugMonitorEnabled ? "on" : "off"}`}
@@ -288,10 +252,10 @@ export function AdminClient() {
                     </button>
                   </div>
                   <a className="btn btn-primary btn-full" href="/dashboard#debug" target="_self" rel="noreferrer">
-                    Input Sayfasına Git
+                    {t.admin.goInput}
                   </a>
                   <Link className="btn btn-outline btn-full" href="/debug-json">
-                    JSON Debug Sayfası
+                    {t.admin.goJsonDebug}
                   </Link>
                 </div>
               ) : null}
@@ -303,81 +267,60 @@ export function AdminClient() {
           {stats ? (
             <div className="stats-grid">
               <div className="stats-card">
-                <div className="stats-label">Höchste Ausgabenphase</div>
+                <div className="stats-label">{t.admin.highestSpendPhase}</div>
                 <div className="stats-value">{stats.top.zeitraum || "-"}</div>
-                <div className="stats-sub">Monat mit maximaler Summe</div>
+                <div className="stats-sub">{t.admin.highestSpendSub}</div>
               </div>
               <div className="stats-card">
-                <div className="stats-label">Top-Kategorie</div>
+                <div className="stats-label">{t.admin.topCategory}</div>
                 <div className="stats-value">{stats.top.kategorie || "-"}</div>
-                <div className="stats-sub">Nach Betrag</div>
+                <div className="stats-sub">{t.admin.topCategorySub}</div>
               </div>
               <div className="stats-card">
-                <div className="stats-label">Häufigster Lieferant</div>
+                <div className="stats-label">{t.admin.topSupplier}</div>
                 <div className="stats-value">{stats.top.lieferant || "-"}</div>
-                <div className="stats-sub">Nach Rechnungsanzahl</div>
+                <div className="stats-sub">{t.admin.topSupplierSub}</div>
               </div>
               <div className="stats-card">
-                <div className="stats-label">Gesamtüberblick</div>
-                <div className="stats-value">{stats.totals.gesamt_anzahl} Rechnungen</div>
-                <div className="stats-sub">{stats.totals.gesamt_summe.toFixed(2)} EUR gesamt</div>
+                <div className="stats-label">{t.admin.overview}</div>
+                <div className="stats-value">{txt(t.admin.invoiceCount, { count: String(stats.totals.gesamt_anzahl) })}</div>
+                <div className="stats-sub">{txt(t.admin.totalSum, { amount: stats.totals.gesamt_summe.toFixed(2) })}</div>
               </div>
               <div className="stats-card">
-                <div className="stats-label">Ø Rechnungsbetrag</div>
+                <div className="stats-label">{t.admin.averageInvoice}</div>
                 <div className="stats-value">{stats.totals.avg_betrag.toFixed(2)} EUR</div>
-                <div className="stats-sub">Durchschnitt pro Rechnung</div>
+                <div className="stats-sub">{t.admin.averageInvoiceSub}</div>
               </div>
               <div className="stats-card">
-                <div className="stats-label">Netto-Cashflow</div>
+                <div className="stats-label">{t.admin.netCashflow}</div>
                 <div className={`stats-value ${stats.totals.netto_cashflow >= 0 ? "up" : "down"}`}>
                   {stats.totals.netto_cashflow.toFixed(2)} EUR
                 </div>
-                <div className="stats-sub">Ausgang - Eingang</div>
+                <div className="stats-sub">{t.admin.netCashflowSub}</div>
               </div>
               <div className="stats-card">
-                <div className="stats-label">30-Tage Trend</div>
+                <div className="stats-label">{t.admin.trend30}</div>
                 <div className={`stats-value ${stats.trend30 <= 0 ? "up" : "down"}`}>{stats.trend30.toFixed(2)}%</div>
-                <div className="stats-sub">gegenüber vorherigen 30 Tagen</div>
+                <div className="stats-sub">{t.admin.trend30Sub}</div>
               </div>
               <div className="stats-card">
-                <div className="stats-label">Überfällige Rechnungen</div>
+                <div className="stats-label">{t.admin.overdue}</div>
                 <div className="stats-value down">{stats.alerts.offene_ueberfaellig}</div>
-                <div className="stats-sub">Fälligkeit überschritten</div>
+                <div className="stats-sub">{t.admin.overdueSub}</div>
               </div>
             </div>
           ) : null}
 
           <div className="admin-card ai-card">
-            <h3>AI Einstellungen</h3>
-            <div className="api-key-hint">Aktuell: {maskedKey}</div>
-            <form className="kat-form" onSubmit={(event) => void saveAi(event)}>
-              <div className="form-group">
-                <label>AI Service</label>
-                <select value={aiService} onChange={(event) => setAiService(event.target.value)}>
-                  {Object.entries(aiOptions).map(([key, option]) => (
-                    <option key={key} value={key}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-group">
-                <label>API-Key</label>
-                <input
-                  type="password"
-                  value={aiKey}
-                  onChange={(event) => setAiKey(event.target.value)}
-                  placeholder="sk-... / sk-or-v1-..."
-                />
-              </div>
-              <button className="btn btn-outline" type="submit">
-                API-Einstellungen speichern
-              </button>
-            </form>
+            <h3>{t.admin.aiSettings}</h3>
+            <div className="api-key-hint">{t.admin.aiSettingsHint}</div>
+            <Link className="btn btn-outline" href="/user">
+              {t.admin.goUser}
+            </Link>
           </div>
 
           <div className="admin-card ai-card">
-            <h3>Budget Überblick</h3>
+            <h3>{t.admin.budgetOverview}</h3>
             {stats?.budgetAlerts?.length ? (
               <ul className="ai-list">
                 {stats.budgetAlerts.map((item) => {
@@ -390,13 +333,13 @@ export function AdminClient() {
                 })}
               </ul>
             ) : (
-              <div className="stats-sub">Noch keine Budgets gesetzt.</div>
+              <div className="stats-sub">{t.admin.noBudgets}</div>
             )}
           </div>
 
           <div className="admin-card ai-card">
-            <h3>KI-Empfehlungen</h3>
-            <div className="ai-meta">Quelle: KI/FALLBACK</div>
+            <h3>{t.admin.aiRecommendations}</h3>
+            <div className="ai-meta">{t.admin.aiSource}</div>
             <ul className="ai-list">
               {insights.map((item) => (
                 <li key={item}>{item}</li>

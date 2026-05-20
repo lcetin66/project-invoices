@@ -26,11 +26,23 @@ export const ALLOWED_EXTENSIONS = new Set([
 ]);
 
 export const AI_OPTIONS = {
-  openai: { label: "OpenAI (direkt)", provider: "openai", model: "gpt-5.4-mini" },
+  openai: { label: "OpenAI GPT-4o-Mini (direkt, Standard)", provider: "openai", model: "gpt-4o-mini" },
   openrouter_openai: {
-    label: "OpenAI über OpenRouter",
+    label: "OpenAI GPT-4o-Mini über OpenRouter (Standard)",
     provider: "openrouter",
-    model: "openai/gpt-5.4-mini"
+    model: "openai/gpt-4o-mini"
+  },
+  openai_mini: { label: "OpenAI GPT-4o-Mini (direkt)", provider: "openai", model: "gpt-4o-mini" },
+  openrouter_openai_mini: {
+    label: "OpenAI GPT-4o-Mini über OpenRouter",
+    provider: "openrouter",
+    model: "openai/gpt-4o-mini"
+  },
+  openai_4o: { label: "OpenAI GPT-4o-Mini (direkt)", provider: "openai", model: "gpt-4o-mini" },
+  openrouter_openai_4o: {
+    label: "OpenAI GPT-4o-Mini über OpenRouter",
+    provider: "openrouter",
+    model: "openai/gpt-4o-mini"
   },
   deepseek: {
     label: "DeepSeek",
@@ -43,9 +55,14 @@ export const AI_OPTIONS = {
     model: "anthropic/claude-3.5-sonnet"
   },
   google: {
-    label: "Google Gemini",
+    label: "Google Gemini 2.0 Flash (über OpenRouter)",
     provider: "openrouter",
     model: "google/gemini-2.0-flash-001"
+  },
+  google_pro: {
+    label: "Google Gemini 1.5 Pro (über OpenRouter)",
+    provider: "openrouter",
+    model: "google/gemini-pro-1.5"
   }
 } as const;
 

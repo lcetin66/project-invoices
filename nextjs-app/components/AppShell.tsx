@@ -1,4 +1,7 @@
+"use client";
+
 import type { ReactNode } from "react";
+import { LanguageProvider } from "@/components/LanguageProvider";
 import { NavBar } from "@/components/NavBar";
 import { t } from "@/lang";
 
@@ -12,7 +15,7 @@ type AppShellProps = {
 
 export function AppShell({ username, title, subtitle, pageClassName, children }: AppShellProps) {
   return (
-    <>
+    <LanguageProvider>
       <NavBar username={username} />
       <main className="main-content">
         <div className={pageClassName ?? ""}>
@@ -30,6 +33,6 @@ export function AppShell({ username, title, subtitle, pageClassName, children }:
           &copy; {new Date().getFullYear()} {t.app.name} - {t.app.footer}
         </p>
       </footer>
-    </>
+    </LanguageProvider>
   );
 }

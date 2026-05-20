@@ -1,7 +1,7 @@
 import type { RowDataPacket } from "mysql2/promise";
 import { AI_OPTIONS } from "@/lib/constants";
 import { execute, getAppSetting, queryRows, setAppSetting } from "@/lib/db";
-import type { AiSettings, Category, Invoice } from "@/lib/types";
+import type { AiSettings, Category, Invoice, UserProfile } from "@/lib/types";
 
 function aiServiceOrDefault(value: string): keyof typeof AI_OPTIONS {
   if (value in AI_OPTIONS) {
@@ -20,15 +20,25 @@ export function maskApiKey(apiKey: string): string {
 export async function getAiSettings(): Promise<AiSettings> {
   const service = aiServiceOrDefault(await getAppSetting("ai_service", "openrouter_openai"));
   const option = AI_OPTIONS[service];
+  const optionProvider = String(option.provider);
+  const optionModel = String(option.model);
 
-  const provider = await getAppSetting("ai_provider", option.provider);
-  const model = await getAppSetting("ai_model", option.model);
+  const storedProvider = String(await getAppSetting("ai_provider", optionProvider));
+  const storedModel = String(await getAppSetting("ai_model", optionModel));
   const apiKey = await getAppSetting("ai_api_key", await getAppSetting("openrouter_api_key", ""));
+  const shouldRepairStoredAi =
+    storedProvider !== optionProvider ||
+    storedModel !== optionModel;
+
+  if (shouldRepairStoredAi) {
+    await setAppSetting("ai_provider", optionProvider);
+    await setAppSetting("ai_model", optionModel);
+  }
 
   return {
     ai_service: service,
-    ai_provider: provider || option.provider,
-    ai_model: model || option.model,
+    ai_provider: optionProvider,
+    ai_model: optionModel,
     ai_api_key: apiKey
   };
 }
@@ -36,19 +46,50 @@ export async function getAiSettings(): Promise<AiSettings> {
 export async function saveAiSettings(serviceInput: string, apiKey: string): Promise<AiSettings> {
   const service = aiServiceOrDefault(serviceInput);
   const option = AI_OPTIONS[service];
+  const existingApiKey = await getAppSetting("ai_api_key", await getAppSetting("openrouter_api_key", ""));
+  const keyToSave = apiKey.trim() || existingApiKey;
 
   await setAppSetting("ai_service", service);
   await setAppSetting("ai_provider", option.provider);
   await setAppSetting("ai_model", option.model);
-  await setAppSetting("ai_api_key", apiKey);
-  await setAppSetting("openrouter_api_key", apiKey);
+  await setAppSetting("ai_api_key", keyToSave);
+  await setAppSetting("openrouter_api_key", keyToSave);
 
   return {
     ai_service: service,
     ai_provider: option.provider,
     ai_model: option.model,
-    ai_api_key: apiKey
+    ai_api_key: keyToSave
   };
+}
+
+export async function getUserProfile(defaultUsername = "admin"): Promise<UserProfile> {
+  return {
+    username: await getAppSetting("profile_username", defaultUsername),
+    first_name: await getAppSetting("profile_first_name", ""),
+    last_name: await getAppSetting("profile_last_name", ""),
+    company_name: await getAppSetting("profile_company_name", ""),
+    company_address: await getAppSetting("profile_company_address", ""),
+    city: await getAppSetting("profile_city", ""),
+    postal_code: await getAppSetting("profile_postal_code", ""),
+    country: await getAppSetting("profile_country", ""),
+    tax_number: await getAppSetting("profile_tax_number", ""),
+    vat_id: await getAppSetting("profile_vat_id", "")
+  };
+}
+
+export async function saveUserProfile(profile: UserProfile): Promise<UserProfile> {
+  await setAppSetting("profile_username", profile.username || "admin");
+  await setAppSetting("profile_first_name", profile.first_name || "");
+  await setAppSetting("profile_last_name", profile.last_name || "");
+  await setAppSetting("profile_company_name", profile.company_name || "");
+  await setAppSetting("profile_company_address", profile.company_address || "");
+  await setAppSetting("profile_city", profile.city || "");
+  await setAppSetting("profile_postal_code", profile.postal_code || "");
+  await setAppSetting("profile_country", profile.country || "");
+  await setAppSetting("profile_tax_number", profile.tax_number || "");
+  await setAppSetting("profile_vat_id", profile.vat_id || "");
+  return profile;
 }
 
 export async function listCategories(activeOnly = false): Promise<Category[]> {

@@ -5,6 +5,7 @@ import { requireRouteSession } from "@/lib/auth";
 import { deletePythonUpload } from "@/lib/python-api";
 import { deleteInvoice, getCategoryNameById, updateInvoice } from "@/lib/repository";
 import { getUploadAbsoluteDir } from "@/lib/utils";
+import { t } from "@/lang";
 
 export const runtime = "nodejs";
 
@@ -33,7 +34,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const { id } = await context.params;
     const invoiceId = Number(id);
     if (!Number.isInteger(invoiceId) || invoiceId <= 0) {
-      return NextResponse.json({ ok: false, message: "Ungültige Rechnungs-ID." }, { status: 400 });
+      return NextResponse.json({ ok: false, message: t.api.invalidInvoiceId }, { status: 400 });
     }
 
     const body = (await request.json()) as Record<string, unknown>;
@@ -62,9 +63,9 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     return NextResponse.json({ ok: true });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
-      return NextResponse.json({ ok: false, message: "Nicht autorisiert." }, { status: 401 });
+      return NextResponse.json({ ok: false, message: t.api.unauthorized }, { status: 401 });
     }
-    return NextResponse.json({ ok: false, message: "Rechnung konnte nicht aktualisiert werden." }, { status: 500 });
+    return NextResponse.json({ ok: false, message: t.api.invoiceUpdateFailed }, { status: 500 });
   }
 }
 
@@ -74,7 +75,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     const { id } = await context.params;
     const invoiceId = Number(id);
     if (!Number.isInteger(invoiceId) || invoiceId <= 0) {
-      return NextResponse.json({ ok: false, message: "Ungültige Rechnungs-ID." }, { status: 400 });
+      return NextResponse.json({ ok: false, message: t.api.invalidInvoiceId }, { status: 400 });
     }
 
     const { names } = await deleteInvoice(invoiceId);
@@ -82,21 +83,23 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
 
     await Promise.all(
       names.map(async (name) => {
-        const localPath = path.join(uploadDir, path.basename(name));
+        const safeName = path.basename(name);
+        if (!safeName) return;
+        const localPath = path.join(uploadDir, safeName);
         try {
-          await fs.unlink(localPath);
+          await fs.rm(localPath, { force: true });
         } catch {
           // ignore missing local file
         }
-        await deletePythonUpload(path.basename(name));
+        await deletePythonUpload(safeName);
       })
     );
 
     return NextResponse.json({ ok: true, deletedFiles: names });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
-      return NextResponse.json({ ok: false, message: "Nicht autorisiert." }, { status: 401 });
+      return NextResponse.json({ ok: false, message: t.api.unauthorized }, { status: 401 });
     }
-    return NextResponse.json({ ok: false, message: "Rechnung konnte nicht gelöscht werden." }, { status: 500 });
+    return NextResponse.json({ ok: false, message: t.api.invoiceDeleteFailed }, { status: 500 });
   }
 }

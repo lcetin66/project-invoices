@@ -1,0 +1,58 @@
+# Image Preprocess Kısa Not
+
+- Amaç: Yüklenen fatura/fiş fotoğrafında arka planı mümkün olduğunca atıp sadece belgeye odaklanmak.
+- Pipeline:
+  - EXIF yön düzeltme
+  - beyaz belge maskesi ile crop/perspektif düzeltme
+  - gölge ve kırışıklık kaynaklı aydınlatma düzeltme
+  - lokal kontrast, hafif denoise, yazı keskinleştirme
+  - text yoğunluğuna göre ikinci trim
+- Debug alanı: `debug.image_preprocess`
+  - `applied`
+  - `reason`
+  - `original_size`
+  - `processed_size`
+- Test edilen örnekler:
+  - `/Users/lventctn/Desktop/IMG_0100.jpg`
+    - Sonuç: açık kumaş arka planı için ikinci trim gerekliydi; çıktı okunabilir ve fişe daha odaklı.
+    - Test çıktısı: `/private/tmp/IMG_0100_preprocess_test_v5.jpg`
+  - `/Users/lventctn/Desktop/IMG_0090.jpg`
+    - Sonuç: metin okunabilirliği arttı; geniş sayfada OCR odaklı crop agresif davranabiliyor.
+    - Test çıktısı: `/private/tmp/IMG_0090_preprocess_test_v5.jpg`
+- Dikkat: Bu işlem fiziksel kırışıklığı yok etmez; OCR/Vision için okunabilirliği artırır.
+
+## 2026-05-20 Son Durum
+
+- OpenAI erişim hatası görüldü:
+  - `gpt-5.4-mini` için proje erişimi yoktu (`model_not_found`, HTTP 403).
+  - Standart model `gpt-4o-mini` olarak ayarlandı.
+  - Python tarafında `gpt-5.4-*` başarısız olursa `gpt-4o-mini` fallback deneniyor.
+- Son başarılı ALDI testi:
+  - Model: `gpt-4o-mini`
+  - Status: `200 ok`
+  - Crop: `3024x4032 -> 846x2600`
+  - Kategorie: `Gastronomie`
+  - Datum/Uhrzeit: `2025-02-24`, `19:48`
+  - Brutto: `133,75`
+  - MwSt bucket 1: `19`, netto `100,82`, MwSt `19,16`
+  - MwSt bucket 2: `7`, netto `12,87`, MwSt `0,90`
+- Son ince ayar:
+  - Final JSON'da `mwst_satz`, `mwst_satz_1`, `mwst_satz_2` oranları normalize edilir (`19,0%` -> `19`, `07,0%` -> `7`).
+  - Tax-only çağrıda netto/MwSt ters gelirse oran kontrolü ile otomatik onarılır.
+- Son doğrulama:
+  - `classifier/ocr_engine.py`, `api/classifier_api.py`, `main.py` py_compile temiz.
+  - Next build temiz.
+  - Python API `http://127.0.0.1:8000` yeniden başlatıldı ve `/api/kategorien` cevap veriyor.
+  - Next UI `http://localhost:3000/dashboard` yeniden başlatıldı; CSS bundle aktif (`/_next/static/css/app/layout.css`).
+- UI ince ayar:
+  - Fatura düzenleme formunda `MwSt.-Satz` kolonu daraltıldı; vergi oranı alanı iki hanelik kısa kullanım için 72px kolon olarak ayarlandı.
+  - Dar ekranda navbar ve form grid taşması giderildi (`scrollWidth == clientWidth` doğrulandı).
+  - `MwSt.-Satz` kolonu sonradan 132px'e çıkarıldı; sol ve sağ para inputları toplam 60px daraltıldı.
+  - `Beschreibung` artık raw vergi/kontrol metni olarak gösterilmez; firma adı kalın, yanında adres ve `USt-IdNr` şeklinde özetlenir.
+- Crop/yön düzeltme:
+  - Crop sonrası belge yönü kontrol edilir; yatay gelen fiş/fatura dikeye çevrilir.
+  - Amaç: fatura başı her zaman 12 istikametine baksın.
+  - Tesseract OSD varsa yön bilgisini kullanır; yoksa yatay çıktıları 90/270 adaylarıyla dikey hale getirir.
+  - Test: `/Users/lventctn/Desktop/IMG_0090.jpg` 90 derece yatay çevrilip denendi; `4032x3024 -> 1490x2560`, portrait `true`.
+  - 180 derece baş aşağı kalan dikey fişler için OCR okunabilirlik skoru eklendi; 0/180 veya 90/270 adaylarından metni en iyi okunan yön seçilir.
+  - Test: `/Users/lventctn/Desktop/IMG_0100.jpg` 180 derece ters çevrilip denendi; çıktı `808x2600`, portrait `true`.

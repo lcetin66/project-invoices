@@ -21,17 +21,11 @@ export interface ClassifierResponse {
   };
 }
 
-function normalizeModel(model: string | null | undefined, provider: string | null | undefined): string {
+export function normalizeModel(model: string | null | undefined, provider: string | null | undefined): string {
   const raw = String(model ?? "").trim();
   const p = String(provider ?? "openrouter").trim().toLowerCase();
-  if (
-    !raw ||
-    raw === "gpt-4o-mini" ||
-    raw === "openai/gpt-4o-mini" ||
-    raw === "gpt-5.4-nano" ||
-    raw === "openai/gpt-5.4-nano"
-  ) {
-    return p === "openai" ? "gpt-5.4-mini" : "openai/gpt-5.4-mini";
+  if (!raw) {
+    return p === "openai" ? "gpt-4o-mini" : "openai/gpt-4o-mini";
   }
   return raw;
 }

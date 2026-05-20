@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "@/app/globals.css";
+import { t } from "@/lang";
 
 export const metadata: Metadata = {
-  title: "RechnungsManager Next",
-  description: "Next.js frontend with Python-based AI invoice classification"
+  title: t.app.name,
+  description: t.dashboard.uploadGreeting.replace("{username}", t.login.standard)
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -85,11 +85,12 @@ export function DashboardClient({ username }: DashboardClientProps) {
   const [lastFileName, setLastFileName] = useState("");
   const [progressState, setProgressState] = useState({
     open: false,
-    title: "Rechnung wird verarbeitet",
+    title: t.dashboard.progressTitle,
     detail: "",
     value: 0
   });
   const [debugEnabled, setDebugEnabled] = useState(true);
+  const [debugMinimized, setDebugMinimized] = useState(false);
   const [debugEntries, setDebugEntries] = useState<DebugEntry[]>([]);
   const [activeDurationMs, setActiveDurationMs] = useState(0);
 
@@ -157,12 +158,12 @@ export function DashboardClient({ username }: DashboardClientProps) {
 
   useEffect(() => {
     const onError = (event: ErrorEvent) => {
-      pushDebug("error", "Client-Fehler", event.message || "Unbekannter JavaScript-Fehler");
+      pushDebug("error", t.dashboard.clientError, event.message || t.dashboard.unknownJsError);
     };
     const onUnhandledRejection = (event: PromiseRejectionEvent) => {
       const reason =
-        event.reason instanceof Error ? event.reason.message : String(event.reason ?? "Unbekannter Promise-Fehler");
-      pushDebug("error", "Unhandled Promise Rejection", reason);
+        event.reason instanceof Error ? event.reason.message : String(event.reason ?? t.dashboard.unknownPromiseError);
+      pushDebug("error", t.dashboard.promiseRejection, reason);
     };
     window.addEventListener("error", onError);
     window.addEventListener("unhandledrejection", onUnhandledRejection);
@@ -192,7 +193,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
         return {
           ...prev,
           value: Math.min(95, Number(next.toFixed(1))),
-          detail: next >= 89 ? "Ergebnis wird gespeichert..." : "KI-Klassifizierung läuft..."
+          detail: next >= 89 ? t.dashboard.progressSaving : t.dashboard.progressClassifying
         };
       });
     }, 320);
@@ -219,11 +220,11 @@ export function DashboardClient({ username }: DashboardClientProps) {
 
       xhr.upload.onloadstart = () => {
         operationRef.current.uploadStartedAt = performance.now();
-        pushDebug("info", "Datei-Upload gestartet");
+        pushDebug("info", t.dashboard.uploadStarted);
         setProgressState((prev) => ({
           ...prev,
           value: Math.max(Number(prev.value), 5),
-          detail: "Datei wird hochgeladen..."
+          detail: t.dashboard.progressUploading
         }));
       };
 
@@ -234,54 +235,54 @@ export function DashboardClient({ username }: DashboardClientProps) {
         for (const milestone of [10, 25, 50, 75, 100]) {
           if (uploadPercent >= milestone && !progressMilestonesRef.current.has(milestone)) {
             progressMilestonesRef.current.add(milestone);
-            pushDebug("info", `Upload-Fortschritt ${milestone}%`);
+            pushDebug("info", txt(t.dashboard.uploadProgress, { percent: String(milestone) }));
           }
         }
         setProgressState((prev) => ({
           ...prev,
           value: mappedPercent,
-          detail: `Datei wird hochgeladen... ${uploadPercent}%`
+          detail: `${t.dashboard.progressUploading} ${uploadPercent}%`
         }));
       };
 
       xhr.upload.onload = () => {
         const uploadStart = operationRef.current.uploadStartedAt;
         if (uploadStart) {
-          pushDebug("success", "Datei-Upload abgeschlossen", "", Math.round(performance.now() - uploadStart));
+          pushDebug("success", t.dashboard.uploadCompleted, "", Math.round(performance.now() - uploadStart));
         }
         operationRef.current.processingStartedAt = performance.now();
-        pushDebug("info", "KI-Verarbeitung gestartet", "Warte auf Python-API Antwort");
+        pushDebug("info", t.dashboard.processingStarted, t.dashboard.waitingForPython);
         setProgressState((prev) => ({
           ...prev,
           value: Math.max(Number(prev.value), 72),
-          detail: "KI-Klassifizierung läuft..."
+          detail: t.dashboard.progressClassifying
         }));
         startServerPhaseSimulation();
       };
 
       xhr.onerror = () => {
         stopProgressSimulation();
-        pushDebug("error", "Upload-Netzwerkfehler", "Die Verbindung zur App/API wurde unterbrochen.");
-        reject(new Error("Netzwerkfehler beim Upload."));
+        pushDebug("error", t.dashboard.networkErrorTitle, t.dashboard.networkErrorText);
+        reject(new Error(t.dashboard.networkError));
       };
 
       xhr.ontimeout = () => {
         stopProgressSimulation();
-        pushDebug("error", "Upload-Timeout", "Der Upload hat das Zeitlimit überschritten.");
-        reject(new Error("Zeitüberschreitung beim Upload."));
+        pushDebug("error", t.dashboard.timeoutTitle, t.dashboard.timeoutText);
+        reject(new Error(t.dashboard.timeoutError));
       };
 
       xhr.onload = () => {
         stopProgressSimulation();
         const payload = parseXhrJson(xhr);
         if (xhr.status < 200 || xhr.status >= 300 || !payload.ok) {
-          pushDebug("error", "API-Fehler", payload.message ?? `Upload fehlgeschlagen (${xhr.status})`);
-          reject(new Error(payload.message ?? `Upload fehlgeschlagen (${xhr.status})`));
+          pushDebug("error", t.dashboard.apiError, payload.message ?? `${t.dashboard.uploadFailed} (${xhr.status})`);
+          reject(new Error(payload.message ?? `${t.dashboard.uploadFailed} (${xhr.status})`));
           return;
         }
         const processingStart = operationRef.current.processingStartedAt;
         if (processingStart) {
-          pushDebug("success", "KI-Verarbeitung abgeschlossen", "", Math.round(performance.now() - processingStart));
+          pushDebug("success", t.dashboard.processingCompleted, "", Math.round(performance.now() - processingStart));
         }
         resolve(payload);
       };
@@ -293,7 +294,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
   async function handleUpload(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!file) {
-      setStatus({ type: "error", text: "Bitte Datei auswählen." });
+      setStatus({ type: "error", text: t.dashboard.selectFileError });
       return;
     }
 
@@ -306,11 +307,11 @@ export function DashboardClient({ username }: DashboardClientProps) {
       uploadStartedAt: null,
       processingStartedAt: null
     };
-    pushDebug("info", "Neuer Vorgang gestartet", file.name || "Unbekannte Datei");
+    pushDebug("info", t.dashboard.newProcess, file.name || t.common.unknown);
     setProgressState({
       open: true,
-      title: "Rechnung wird verarbeitet",
-      detail: "Upload wird vorbereitet...",
+      title: t.dashboard.progressTitle,
+      detail: t.dashboard.progressPreparing,
       value: 3
     });
 
@@ -327,12 +328,12 @@ export function DashboardClient({ username }: DashboardClientProps) {
       setProgressState((prev) => ({
         ...prev,
         value: 97,
-        detail: "Ergebnis wird gespeichert..."
+        detail: t.dashboard.progressSaving
       }));
 
-      setStatus({ type: "ok", text: "Rechnung erfolgreich verarbeitet." });
+      setStatus({ type: "ok", text: t.dashboard.processedOk });
       if (data.warning) {
-        pushDebug("info", "Teilweise Erkennung", String(data.warning));
+        pushDebug("info", t.dashboard.partialDetection, String(data.warning));
       }
       const ocrLen = Number(data.debug?.ocr_text_len ?? 0);
       const ocrPreview = String(data.debug?.ocr_text_preview ?? "").trim();
@@ -340,11 +341,11 @@ export function DashboardClient({ username }: DashboardClientProps) {
       const mode = String(data.debug?.mode ?? "").trim();
       pushDebug(
         "info",
-        "OCR-Diagnose",
-        `Mode: ${mode || "-"} | Textlänge: ${ocrLen}${ocrPreview ? ` | Vorschau: ${ocrPreview.slice(0, 220)}` : ""}${visionDbg ? ` | Vision: ${visionDbg.slice(0, 240)}` : ""}`
+        t.dashboard.ocrDiagnostics,
+        `${t.dashboard.debugMode}: ${mode || "-"} | ${t.dashboard.debugTextLength}: ${ocrLen}${ocrPreview ? ` | ${t.dashboard.debugPreview}: ${ocrPreview.slice(0, 220)}` : ""}${visionDbg ? ` | ${t.dashboard.debugVision}: ${visionDbg.slice(0, 240)}` : ""}`
       );
       setResult({
-        supplier: String(data.ergebnis?.lieferant ?? "Unbekannt"),
+        supplier: String(data.ergebnis?.lieferant ?? t.common.unknown),
         category: String(data.ergebnis?.kategorie ?? "Sonstige"),
         total: String(data.ergebnis?.brutto_betrag ?? "0"),
         quality: Number(data.qualitaet_score ?? 0)
@@ -362,21 +363,21 @@ export function DashboardClient({ username }: DashboardClientProps) {
       setProgressState((prev) => ({
         ...prev,
         value: 100,
-        detail: "Abgeschlossen."
+        detail: t.dashboard.progressDone
       }));
-      pushDebug("success", "Rechnung erfolgreich verarbeitet", "", operationDurationMs());
+      pushDebug("success", t.dashboard.processedOk, "", operationDurationMs());
       await new Promise((resolve) => window.setTimeout(resolve, 220));
       setProgressState((prev) => ({ ...prev, open: false }));
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Serverfehler beim Upload.";
+      const errorMessage = error instanceof Error ? error.message : t.dashboard.serverUploadError;
       setProgressState((prev) => ({
         ...prev,
         value: 100,
-        detail: "Vorgang fehlgeschlagen."
+        detail: t.dashboard.progressFailed
       }));
       await new Promise((resolve) => window.setTimeout(resolve, 220));
       setProgressState((prev) => ({ ...prev, open: false }));
-      pushDebug("error", "Verarbeitung fehlgeschlagen", errorMessage, operationDurationMs());
+      pushDebug("error", t.dashboard.processingFailed, errorMessage, operationDurationMs());
       setStatus({ type: "error", text: errorMessage });
     } finally {
       stopProgressSimulation();
@@ -431,7 +432,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
           <div className="popup-card progress-popup" role="status" aria-live="polite">
             <h3>{progressState.title}</h3>
             <p>{progressState.detail}</p>
-            <div className="progress-track" aria-label="Upload-Fortschritt">
+            <div className="progress-track" aria-label={t.dashboard.uploadProgress.replace("{percent}", "")}>
               <div
                 className="progress-fill"
                 style={{ width: `${Math.max(0, Math.min(100, Number(progressState.value)))}%` }}
@@ -439,7 +440,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
             </div>
             <div className="progress-meta">
               <strong>{Math.round(Number(progressState.value))}%</strong>
-              <span>Bitte warten...</span>
+              <span>{t.dashboard.pleaseWait}</span>
             </div>
           </div>
         </div>
@@ -477,7 +478,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
             </div>
             <div className="upload-text">
               <strong>{file ? file.name : t.dashboard.chooseFile}</strong>
-              <span>PDF, JPG, PNG, WEBP, HEIC (max 10MB)</span>
+              <span>{t.dashboard.fileTypesHint}</span>
             </div>
             <input
               id="rechnung_datei"
@@ -494,8 +495,8 @@ export function DashboardClient({ username }: DashboardClientProps) {
             <div className="upload-field">
               <label>{t.dashboard.type}</label>
               <select value={rechnungTyp} onChange={(event) => setRechnungTyp(event.target.value)}>
-                <option value="eingang">Eingang</option>
-                <option value="ausgang">Ausgang</option>
+                <option value="eingang">{t.dashboard.inputTypeIncoming}</option>
+                <option value="ausgang">{t.dashboard.inputTypeOutgoing}</option>
               </select>
             </div>
             <div className="upload-field">
@@ -524,7 +525,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
       {result ? (
         <section className="ergebnis-section fade-in">
           <div className="section-header">
-            <h2>Klassifizierungsergebnis</h2>
+            <h2>{t.dashboard.resultTitle}</h2>
           </div>
           <div className="ergebnis-container">
             <div className="ergebnis-preview-card">
@@ -537,7 +538,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
               ) : (
                 <img
                   src={`/api/uploads/${encodeURIComponent(lastFileName)}`}
-                  alt="Rechnung Vorschau"
+                  alt={t.dashboard.resultPreviewAlt}
                   className="ergebnis-img-preview"
                 />
               )}
@@ -548,15 +549,15 @@ export function DashboardClient({ username }: DashboardClientProps) {
               </span>
               <div className="ergebnis-grid">
                 <div className="ergebnis-item">
-                  <span className="ergebnis-label">Lieferant</span>
+                  <span className="ergebnis-label">{t.dashboard.supplier}</span>
                   <span className="ergebnis-value">{result.supplier}</span>
                 </div>
                 <div className="ergebnis-item">
-                  <span className="ergebnis-label">Brutto Betrag</span>
+                  <span className="ergebnis-label">{t.dashboard.grossAmount}</span>
                   <span className="ergebnis-value highlight">{result.total} EUR</span>
                 </div>
                 <div className="ergebnis-item">
-                  <span className="ergebnis-label">Qualität Score</span>
+                  <span className="ergebnis-label">{t.dashboard.qualityScore}</span>
                   <span className="ergebnis-value">{result.quality}/100</span>
                 </div>
               </div>
@@ -585,7 +586,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
                       className="rechnung-badge"
                       style={{ background: invoice.farbe || categoryColor(invoice.kategorie_name || "Sonstige") }}
                     >
-                      {invoice.kategorie_name || "Nicht kategorisiert"}
+                      {invoice.kategorie_name || t.dashboard.uncategorized}
                     </span>
                     <span className="rechnung-datum">{String(invoice.hochladezeit).slice(0, 10)}</span>
                   </div>
@@ -598,18 +599,18 @@ export function DashboardClient({ username }: DashboardClientProps) {
                           className="rechnung-thumb pdf-thumb"
                         />
                       ) : (
-                        <img src={`/api/uploads/${encodeURIComponent(fileName)}`} className="rechnung-thumb" alt="Rechnung" />
+                        <img src={`/api/uploads/${encodeURIComponent(fileName)}`} className="rechnung-thumb" alt={t.app.name} />
                       )}
                     </div>
                     <div className="rechnung-info">
-                      <strong>{invoice.lieferant || "Unbekannt"}</strong>
+                      <strong>{invoice.lieferant || t.common.unknown}</strong>
                       <span className="rechnung-betrag">{(invoice.brutto_betrag ?? 0).toFixed(2)} EUR</span>
                       <span className="rechnung-desc">{invoice.beschreibung || "-"}</span>
                     </div>
                   </div>
                   <div className="rechnung-card-footer">
                     <a className="btn btn-sm btn-outline" href={`/api/uploads/${encodeURIComponent(fileName)}`} target="_blank" rel="noreferrer">
-                      Ansehen
+                      {t.dashboard.view}
                     </a>
                   </div>
                 </div>
@@ -620,7 +621,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
       </section>
 
       {debugEnabled ? (
-      <section className="debug-dock open" aria-live="polite">
+      <section className={`debug-dock ${debugMinimized ? "collapsed" : "open"}`} aria-live="polite">
         <div className="debug-monitor">
           <div className="debug-monitor-head">
             <h3>{t.dashboard.debugTitle}</h3>
@@ -628,12 +629,16 @@ export function DashboardClient({ username }: DashboardClientProps) {
               <button type="button" className="debug-btn" onClick={() => setDebugEntries([])}>
                 {t.dashboard.clear}
               </button>
+              <button type="button" className="debug-btn" onClick={() => setDebugMinimized((prev) => !prev)}>
+                {debugMinimized ? t.dashboard.open : t.dashboard.minimize}
+              </button>
             </div>
           </div>
           <div className="debug-monitor-meta">
             <span>{t.dashboard.entries}: {debugEntries.length}</span>
             <span>{t.dashboard.runtime}: {uploading ? `${activeDurationMs} ms` : "-"}</span>
           </div>
+            {!debugMinimized ? (
             <div className="debug-monitor-body">
               {debugEntries.length === 0 ? <p className="debug-empty">{t.dashboard.noDebug}</p> : null}
               {debugEntries.map((entry) => (
@@ -642,11 +647,12 @@ export function DashboardClient({ username }: DashboardClientProps) {
                     <strong>{entry.title}</strong>
                     <span>{entry.timestamp}</span>
                   </div>
-                  {entry.durationMs != null ? <div className="debug-entry-duration">Dauer: {entry.durationMs} ms</div> : null}
+                  {entry.durationMs != null ? <div className="debug-entry-duration">{t.dashboard.duration}: {entry.durationMs} ms</div> : null}
                   {entry.detail ? <p>{entry.detail}</p> : null}
                 </div>
               ))}
             </div>
+            ) : null}
         </div>
       </section>
       ) : null}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRouteSession } from "@/lib/auth";
 import { deactivateCategory, deleteCategory } from "@/lib/repository";
+import { t } from "@/lang";
 
 export const runtime = "nodejs";
 
@@ -10,7 +11,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const { id } = await context.params;
     const categoryId = Number(id);
     if (!Number.isInteger(categoryId) || categoryId <= 0) {
-      return NextResponse.json({ ok: false, message: "Ungültige Kategorie-ID." }, { status: 400 });
+      return NextResponse.json({ ok: false, message: t.api.invalidCategoryId }, { status: 400 });
     }
 
     const body = (await request.json()) as { action?: string };
@@ -18,15 +19,15 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
 
     if (action === "deactivate") {
       await deactivateCategory(categoryId);
-      return NextResponse.json({ ok: true, message: "Kategorie wurde deaktiviert." });
+      return NextResponse.json({ ok: true, message: t.admin.deactivated });
     }
 
-    return NextResponse.json({ ok: false, message: "Ungültige Aktion." }, { status: 400 });
+    return NextResponse.json({ ok: false, message: t.api.invalidAction }, { status: 400 });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
-      return NextResponse.json({ ok: false, message: "Nicht autorisiert." }, { status: 401 });
+      return NextResponse.json({ ok: false, message: t.api.unauthorized }, { status: 401 });
     }
-    return NextResponse.json({ ok: false, message: "Kategorie konnte nicht aktualisiert werden." }, { status: 500 });
+    return NextResponse.json({ ok: false, message: t.api.categoryUpdateFailed }, { status: 500 });
   }
 }
 
@@ -36,7 +37,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     const { id } = await context.params;
     const categoryId = Number(id);
     if (!Number.isInteger(categoryId) || categoryId <= 0) {
-      return NextResponse.json({ ok: false, message: "Ungültige Kategorie-ID." }, { status: 400 });
+      return NextResponse.json({ ok: false, message: t.api.invalidCategoryId }, { status: 400 });
     }
 
     const result = await deleteCategory(categoryId);
@@ -46,8 +47,8 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     return NextResponse.json({ ok: true, message: result.message });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
-      return NextResponse.json({ ok: false, message: "Nicht autorisiert." }, { status: 401 });
+      return NextResponse.json({ ok: false, message: t.api.unauthorized }, { status: 401 });
     }
-    return NextResponse.json({ ok: false, message: "Kategorie konnte nicht gelöscht werden." }, { status: 500 });
+    return NextResponse.json({ ok: false, message: t.api.categoryDeleteFailed }, { status: 500 });
   }
 }

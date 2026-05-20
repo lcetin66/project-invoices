@@ -7,6 +7,7 @@ import { ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES } from "@/l
 import { classifyWithPython } from "@/lib/python-api";
 import { getAiSettings, insertInvoice, listCategories, listInvoices } from "@/lib/repository";
 import { ensureUploadDir, sanitizeFilename } from "@/lib/utils";
+import { t } from "@/lang";
 
 export const runtime = "nodejs";
 
@@ -61,6 +62,93 @@ function parseLocaleNumber(value: unknown): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+function normalizeTaxDetails(value: unknown): string {
+  let raw = String(value ?? "").trim();
+  if (!raw) return "";
+  // Force line breaks before each new VAT rate block if model returns merged text
+  // like "... MwSt 0,9019% Netto ..."
+  raw = raw.replace(/(?<!^)(?=(?:\d{1,2}(?:[.,]\d{1,2})?\s*%))/g, "\n");
+  return raw
+    .split(/\r?\n|\|/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+type TaxLine = {
+  rate: number;
+  netto: number | null;
+  tax: number | null;
+};
+
+function parseTaxDetailsLines(value: string): TaxLine[] {
+  const out: TaxLine[] = [];
+  if (!value.trim()) return out;
+
+  const rowPattern =
+    /(\d{1,2}(?:[.,]\d{1,2})?)\s*%.*?netto\s*([0-9]+(?:[.,][0-9]{1,2})?).*?(?:mwst|ust|vat|steuer)\s*([0-9]+(?:[.,][0-9]{1,2})?)/gi;
+  let match = rowPattern.exec(value);
+  while (match) {
+    const rate = parseLocaleNumber(match[1]);
+    const netto = parseLocaleNumber(match[2]);
+    const tax = parseLocaleNumber(match[3]);
+    if (rate != null && rate >= 0) {
+      out.push({ rate, netto, tax });
+    }
+    match = rowPattern.exec(value);
+  }
+  return out;
+}
+
+function formatMoney(value: number | null, currency = "EUR"): string {
+  if (value == null) return "";
+  const fixed = value.toFixed(2).replace(".", ",");
+  return `${fixed} ${currency}`.trim();
+}
+
+function buildReceiptSummary(result: Record<string, unknown>, taxLines: TaxLine[], currency: string): string {
+  const s = (v: unknown): string => String(v ?? "").trim();
+  const lines: string[] = [];
+
+  const supplier = s(result.lieferant);
+  const address = s(result.adresse);
+  const date = s(result.rechnungsdatum);
+  const time = s(result.uhrzeit);
+  const payment = [s(result.zahlungsart), s(result.zahlungsmittel)].filter(Boolean).join(", ");
+  const cardNo = s(result.karten_nr);
+  const tid = s(result.t_id);
+  const belegNr = s(result.beleg_nr || result.belegnummer);
+  const vu = s(result.vu_nummer);
+  const ust = s(result.ust_id_nr || result.steuer_id);
+
+  if (supplier) lines.push(`${t.api.receiptSupplier}: ${supplier}`);
+  if (address) lines.push(`${t.api.receiptAddress}: ${address}`);
+  if (date) lines.push(`${t.api.receiptDate}: ${date}`);
+  if (time) lines.push(`${t.api.receiptTime}: ${time}`);
+
+  const gross = parseLocaleNumber(result.gesamt_betrag ?? result.brutto_betrag);
+  if (gross != null) lines.push(`${t.api.receiptAmount}: ${formatMoney(gross, currency)}`);
+
+  if (payment) lines.push(`${t.api.receiptPayment}: ${payment}`);
+  if (cardNo) lines.push(`${t.api.receiptCardNumber}: ${cardNo}`);
+  if (tid) lines.push(`${t.api.receiptTransactionId}: ${tid}`);
+  if (belegNr) lines.push(`${t.api.receiptDocumentNumber}: ${belegNr}`);
+  if (vu) lines.push(`${t.api.receiptVuNumber}: ${vu}`);
+  if (ust) lines.push(`${t.api.receiptVatId}: ${ust}`);
+
+  if (taxLines.length > 0) {
+    lines.push(`${t.api.receiptTaxBreakdown}:`);
+    for (const line of taxLines) {
+      const rate = Number.isFinite(line.rate) ? String(line.rate).replace(".", ",") : "";
+      const netto = line.netto == null ? "" : String(line.netto.toFixed(2)).replace(".", ",");
+      const tax = line.tax == null ? "" : String(line.tax.toFixed(2)).replace(".", ",");
+      lines.push(`${rate}% -> ${t.api.receiptNet} ${netto} -> ${t.api.receiptVat} ${tax}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     await requireRouteSession(request);
@@ -82,9 +170,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: true, invoices });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
-      return NextResponse.json({ ok: false, message: "Nicht autorisiert." }, { status: 401 });
+      return NextResponse.json({ ok: false, message: t.api.unauthorized }, { status: 401 });
     }
-    return NextResponse.json({ ok: false, message: "Rechnungen konnten nicht geladen werden." }, { status: 500 });
+    return NextResponse.json({ ok: false, message: t.api.invoicesLoadFailed }, { status: 500 });
   }
 }
 
@@ -95,7 +183,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const form = await request.formData();
     const fileEntry = form.get("file") ?? form.get("rechnung_datei");
     if (!(fileEntry instanceof File)) {
-      return NextResponse.json({ ok: false, message: "Keine Datei gefunden." }, { status: 400 });
+      return NextResponse.json({ ok: false, message: t.api.missingFile }, { status: 400 });
     }
 
     const file = fileEntry;
@@ -104,11 +192,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const extAllowed = ALLOWED_EXTENSIONS.has(extension);
 
     if (!typeAllowed && !extAllowed) {
-      return NextResponse.json({ ok: false, message: "Nur PDF- und Bilddateien sind erlaubt." }, { status: 400 });
+      return NextResponse.json({ ok: false, message: t.api.invalidFileType }, { status: 400 });
     }
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      return NextResponse.json({ ok: false, message: "Datei ist zu groß (max. 10 MB)." }, { status: 400 });
+      return NextResponse.json({ ok: false, message: t.api.fileTooLarge }, { status: 400 });
     }
 
     const ai = await getAiSettings();
@@ -117,9 +205,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const supplier = safeString(result.lieferant ?? result.vendor);
     const grossAmount = parseLocaleNumber(result.brutto_betrag ?? result.total) ?? 0;
-    let netAmount = parseLocaleNumber(result.netto_betrag);
-    let vatAmount = parseLocaleNumber(result.mwst_betrag);
-    let vatRate = parseLocaleNumber(result.mwst_satz);
+    let netAmount = parseLocaleNumber(result.netto_betrag_1 ?? result.netto_betrag);
+    let vatAmount = parseLocaleNumber(result.mwst_betrag_1 ?? result.mwst_betrag);
+    let vatRate = parseLocaleNumber(result.mwst_satz_1 ?? result.mwst_satz);
     const currency = safeString(result.waehrung) || "EUR";
 
     // If vision found gross but omitted tax/net fields, derive sensible defaults for edit form.
@@ -146,8 +234,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json(
         {
           ok: false,
-          message:
-            "Bildrechnung wurde unsicher erkannt (Platzhalterwerte). Bitte erneut hochladen oder API-Einstellungen prüfen."
+          message: t.api.unsafeImage
         },
         { status: 422 }
       );
@@ -177,6 +264,48 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const dueDateRaw = String(form.get("faelligkeitsdatum") ?? "").trim();
     const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(dueDateRaw) ? dueDateRaw : null;
+    const manualDescription = safeString(form.get("beschreibung"));
+    const taxDetails = normalizeTaxDetails(result.steuerdetails);
+    const taxLines = parseTaxDetailsLines(taxDetails);
+
+    if (taxLines.length === 0) {
+      const r1 = parseLocaleNumber(result.mwst_satz_1 ?? result.mwst_satz);
+      const n1 = parseLocaleNumber(result.netto_betrag_1 ?? result.netto_betrag);
+      const t1 = parseLocaleNumber(result.mwst_betrag_1 ?? result.mwst_betrag);
+      if (r1 != null && r1 >= 0) {
+        taxLines.push({ rate: r1, netto: n1, tax: t1 });
+      }
+
+      const r2 = parseLocaleNumber(result.mwst_satz_2);
+      const n2 = parseLocaleNumber(result.netto_betrag_2);
+      const t2 = parseLocaleNumber(result.mwst_betrag_2);
+      if (r2 != null && r2 >= 0 && (n2 != null || t2 != null)) {
+        taxLines.push({ rate: r2, netto: n2, tax: t2 });
+      }
+    }
+
+    if (taxLines.length > 0 && (vatRate == null || netAmount == null || vatAmount == null)) {
+      // Prefer the dominant VAT bucket for primary fields (usually 19% or highest netto).
+      const dominant = [...taxLines].sort((a, b) => {
+        const aNetto = a.netto ?? 0;
+        const bNetto = b.netto ?? 0;
+        if (bNetto !== aNetto) return bNetto - aNetto;
+        return b.rate - a.rate;
+      })[0];
+      vatRate = dominant.rate;
+      if (dominant.tax != null) vatAmount = dominant.tax;
+      if (dominant.netto != null) netAmount = dominant.netto;
+    }
+
+    // Hard guard: net cannot be identical to gross when VAT exists.
+    if (grossAmount > 0 && netAmount != null && vatAmount != null && vatAmount > 0 && netAmount >= grossAmount) {
+      netAmount = Number((grossAmount - vatAmount).toFixed(2));
+    }
+
+    const receiptSummary = buildReceiptSummary(result as Record<string, unknown>, taxLines, currency);
+    const mergedDescription = [manualDescription, receiptSummary]
+      .filter(Boolean)
+      .join("\n\n") || null;
 
     const safeApiFilename = sanitizeFilename(String(classifier.datei_name || file.name));
     const uploadDir = await ensureUploadDir();
@@ -193,8 +322,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       dateityp: file.type || "application/octet-stream",
       rechnungTyp: finalInvoiceType,
       rechnungsdatum: invoiceDate,
-      beschreibung: safeString(form.get("beschreibung")) || null,
-      lieferant: supplier || "Unbekannt",
+      beschreibung: mergedDescription,
+      lieferant: supplier || t.common.unknown,
       kategorieId: finalCategoryId,
       kategorieName: finalCategoryName,
       nettoBetrag: netAmount,
@@ -210,14 +339,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       ok: true,
       warning: weakExtraction
         ? isImage
-          ? "Bildrechnung wurde nur teilweise erkannt. Bitte Felder prüfen und ggf. manuell korrigieren."
-          : "Rechnungsdaten wurden nur teilweise erkannt. Bitte Felder prüfen."
+          ? t.api.imagePartialWarning
+          : t.api.invoicePartialWarning
         : null,
       debug: classifier.debug ?? null,
       invoiceId,
       datei_name: safeApiFilename,
       ergebnis: {
         ...result,
+        beleg_auszug: receiptSummary,
         kategorie: finalCategoryName,
         rechnung_typ: finalInvoiceType,
         rechnungsdatum: invoiceDate
@@ -226,10 +356,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
-      return NextResponse.json({ ok: false, message: "Nicht autorisiert." }, { status: 401 });
+      return NextResponse.json({ ok: false, message: t.api.unauthorized }, { status: 401 });
     }
 
-    const message = error instanceof Error ? error.message : "Upload fehlgeschlagen.";
+    const message = error instanceof Error ? error.message : t.api.uploadFailed;
     return NextResponse.json({ ok: false, message }, { status: 500 });
   }
 }

@@ -2,12 +2,14 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
+import { t } from "@/lang";
 
 type DebugApiResponse = {
   ok?: boolean;
   message?: string;
   sent_json?: unknown;
   response_json?: unknown;
+  openai_trace?: unknown;
 };
 
 export function JsonDebugClient() {
@@ -18,6 +20,15 @@ export function JsonDebugClient() {
   const [responseJson, setResponseJson] = useState<unknown>(null);
 
   const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : ""), [file]);
+  
+  async function copyJson(value: unknown): Promise<void> {
+    const text = JSON.stringify(value ?? null, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // no-op
+    }
+  }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -32,13 +43,13 @@ export function JsonDebugClient() {
       const res = await fetch("/api/debug-json", { method: "POST", body: formData });
       const data = (await res.json()) as DebugApiResponse;
       if (!res.ok || !data.ok) {
-        setError(data.message ?? "Debug request failed.");
+        setError(data.message ?? t.debugJson.failed);
         return;
       }
       setSentJson(data.sent_json ?? null);
       setResponseJson(data.response_json ?? null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Debug request failed.");
+      setError(e instanceof Error ? e.message : t.debugJson.failed);
     } finally {
       setLoading(false);
     }
@@ -54,51 +65,29 @@ export function JsonDebugClient() {
           required
         />
         <button className="btn btn-primary" type="submit" disabled={!file || loading}>
-          {loading ? "Läuft..." : "Debug Çalıştır"}
+          {loading ? t.debugJson.running : t.debugJson.run}
         </button>
       </form>
       {error ? <div className="alert alert-error">{error}</div> : null}
 
       <div className="json-debug-grid">
         <div className="json-debug-left">
-          {previewUrl ? <img src={previewUrl} alt="input" className="json-debug-image" /> : <p>Image Preview</p>}
+          {previewUrl ? <img src={previewUrl} alt={t.debugJson.preview} className="json-debug-image" /> : <p>{t.debugJson.preview}</p>}
         </div>
         <div className="json-debug-right">
           <div className="json-panel">
-            <h3>Giden JSON</h3>
+            <div className="json-panel-head">
+              <h3>{t.debugJson.sent}</h3>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => void copyJson(sentJson)}>{t.common.copy}</button>
+            </div>
             <pre>{JSON.stringify(sentJson, null, 2)}</pre>
           </div>
           <div className="json-panel">
-            <h3>Dönen JSON</h3>
+            <div className="json-panel-head">
+              <h3>{t.debugJson.received}</h3>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => void copyJson(responseJson)}>{t.common.copy}</button>
+            </div>
             <pre>{JSON.stringify(responseJson, null, 2)}</pre>
-          </div>
-          <div className="json-panel">
-            <h3>Wichtige Felder (Schnellansicht)</h3>
-            <pre>
-              {JSON.stringify(
-                (() => {
-                  const r = (responseJson as { ergebnis?: Record<string, unknown> } | null)?.ergebnis ?? {};
-                  return {
-                    lieferant: r.lieferant ?? "",
-                    kategorie: r.kategorie ?? "",
-                    brutto_betrag: r.brutto_betrag ?? "",
-                    netto_betrag: r.netto_betrag ?? "",
-                    mwst_satz: r.mwst_satz ?? "",
-                    mwst_betrag: r.mwst_betrag ?? "",
-                    zahlungsart: r.zahlungsart ?? "",
-                    zahlungsmittel: r.zahlungsmittel ?? "",
-                    belegnummer: r.belegnummer ?? "",
-                    rechnungsnummer: r.rechnungsnummer ?? "",
-                    kundennummer: r.kundennummer ?? "",
-                    steuer_id: r.steuer_id ?? "",
-                    iban_maskiert: r.iban_maskiert ?? "",
-                    faelligkeitsdatum: r.faelligkeitsdatum ?? ""
-                  };
-                })(),
-                null,
-                2
-              )}
-            </pre>
           </div>
         </div>
       </div>

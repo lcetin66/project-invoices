@@ -10,19 +10,13 @@ import re
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
-from io import BytesIO
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 from classifier.categories import STANDARDS_KATEGORIEN
 from main import process_invoice_file
-from classifier.ocr_engine import _crop_rechnung_region
-
-try:
-    from PIL import Image
-except Exception:
-    Image = None
+from classifier.ocr_engine import prepare_invoice_image_file_inplace
 
 app = Flask(__name__)
 CORS(app)
@@ -35,6 +29,14 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff", ".webp", ".heic", ".heif"}
 
 
+def _normalize_api_model(api_provider: str, api_model: str) -> str:
+    provider = (api_provider or "openrouter").strip().lower()
+    raw = (api_model or "").strip()
+    if not raw:
+        return "gpt-4o-mini" if provider == "openai" else "openai/gpt-4o-mini"
+    return raw
+
+
 def _sicherer_dateiname(original_name: str) -> str:
     """Normalize uploaded filename to URL-safe ASCII-ish characters."""
     base = os.path.basename(original_name or "datei")
@@ -44,28 +46,6 @@ def _sicherer_dateiname(original_name: str) -> str:
     if len(ext) > 10:
         ext = ""
     return f"{stem}{ext}"
-
-
-def _crop_uploaded_image_inplace(datei_pfad: str) -> bool:
-    """Crop invoice region in-place so preview and processing use the same focused image."""
-    if Image is None or not os.path.isfile(datei_pfad):
-        return False
-    try:
-        with Image.open(datei_pfad) as img:
-            cropped = _crop_rechnung_region(img)
-            ext = os.path.splitext(datei_pfad)[1].lower()
-            save_format = "PNG" if ext == ".png" else "JPEG"
-            rgb = cropped.convert("RGB") if save_format == "JPEG" else cropped
-            out = BytesIO()
-            if save_format == "JPEG":
-                rgb.save(out, format=save_format, quality=95, optimize=True)
-            else:
-                rgb.save(out, format=save_format, optimize=True)
-        with open(datei_pfad, "wb") as f:
-            f.write(out.getvalue())
-        return True
-    except Exception:
-        return False
 
 
 @app.route('/api/klassifizieren', methods=['POST'])
@@ -83,23 +63,26 @@ def klassifiziere_rechnung():
     datei_name = f"{uuid.uuid4().hex}_{safe_original}"
     datei_pfad = os.path.join(UPLOAD_ORDNER, datei_name)
     datei.save(datei_pfad)
-    # Keep original upload bytes. Local OCR already tries crop/no-crop variants and
-    # aggressive in-place cropping can permanently remove text regions.
+    preprocess_debug = {}
+    if os.path.splitext(datei_pfad)[1].lower() in IMAGE_EXTS:
+        preprocess_debug = prepare_invoice_image_file_inplace(datei_pfad)
 
     # Optional: API-Key aus dem Web-Frontend
     api_key = (request.form.get('api_key') or "").strip()
     api_provider = (request.form.get('api_provider') or "openrouter").strip().lower()
-    api_model = (request.form.get('api_model') or "").strip()
+    api_model = _normalize_api_model(api_provider, request.form.get('api_model') or "")
 
     # Gemeinsamer Motor aus main.py (CLI + API)
     out = process_invoice_file(datei_pfad, api_key=api_key, api_provider=api_provider, api_model=api_model)
+    debug = out.get('debug', {})
+    debug['image_preprocess'] = preprocess_debug
 
     return jsonify({
         'erfolgreich': True,
         'datei_name': datei_name,
         'ergebnis': out['ergebnis'],
         'qualitaet_score': out['qualitaet_score'],
-        'debug': out.get('debug', {}),
+        'debug': debug,
     })
 
 
@@ -137,7 +120,7 @@ def business_insights():
     stats = payload.get('stats', {})
     api_key = (payload.get('api_key') or "").strip()
     api_provider = (payload.get('api_provider') or "openrouter").strip().lower()
-    api_model = (payload.get('api_model') or "").strip()
+    api_model = _normalize_api_model(api_provider, payload.get('api_model') or "")
 
     if not stats:
         return jsonify({
@@ -183,7 +166,7 @@ Kennzahlen:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": api_model or "gpt-4o-mini",
+                    "model": api_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0,
                 },
@@ -197,7 +180,7 @@ Kennzahlen:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": api_model or "openai/gpt-4o-mini",
+                    "model": api_model,
                     "messages": [{"role": "user", "content": prompt}],
                 },
                 timeout=20,

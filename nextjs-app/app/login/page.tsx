@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { LanguageProvider } from "@/components/LanguageProvider";
 import { LoginForm } from "@/components/LoginForm";
 import { getServerSession } from "@/lib/auth";
 
@@ -12,7 +13,9 @@ export default async function LoginPage() {
 
   return (
     <div className="login-page">
-      <LoginForm />
+      <LanguageProvider>
+        <LoginForm />
+      </LanguageProvider>
     </div>
   );
 }

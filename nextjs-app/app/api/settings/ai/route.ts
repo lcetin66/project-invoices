@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRouteSession } from "@/lib/auth";
 import { AI_OPTIONS } from "@/lib/constants";
 import { getAiSettings, maskApiKey, saveAiSettings } from "@/lib/repository";
+import { t } from "@/lang";
 
 export const runtime = "nodejs";
 
 async function testApiKey(provider: string, model: string, apiKey: string): Promise<{ ok: boolean; message: string }> {
   if (!apiKey.trim()) {
-    return { ok: false, message: "API-Key fehlt." };
+    return { ok: false, message: t.api.apiKeyMissing };
   }
 
   const isOpenAI = provider === "openai";
@@ -29,7 +30,7 @@ async function testApiKey(provider: string, model: string, apiKey: string): Prom
     });
 
     if (response.ok) {
-      return { ok: true, message: "API-Key ist gültig." };
+      return { ok: true, message: t.api.apiKeyValid };
     }
 
     return {
@@ -37,7 +38,7 @@ async function testApiKey(provider: string, model: string, apiKey: string): Prom
       message: `API-Test fehlgeschlagen (HTTP ${response.status}).`
     };
   } catch {
-    return { ok: false, message: "API-Test fehlgeschlagen (Netzwerk)." };
+    return { ok: false, message: t.api.apiTestNetworkFailed };
   }
 }
 
@@ -55,9 +56,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
-      return NextResponse.json({ ok: false, message: "Nicht autorisiert." }, { status: 401 });
+      return NextResponse.json({ ok: false, message: t.api.unauthorized }, { status: 401 });
     }
-    return NextResponse.json({ ok: false, message: "AI-Einstellungen konnten nicht geladen werden." }, { status: 500 });
+    return NextResponse.json({ ok: false, message: t.api.aiSettingsLoadFailed }, { status: 500 });
   }
 }
 
@@ -75,8 +76,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({
       ok: test.ok,
       message: test.ok
-        ? `API-Einstellungen gespeichert. ${test.message}`
-        : `API-Einstellungen gespeichert. ${test.message}`,
+        ? `${t.user.saved} ${test.message}`
+        : `${t.user.saved} ${test.message}`,
       settings: {
         ...saved,
         masked_api_key: maskApiKey(saved.ai_api_key)
@@ -84,8 +85,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
-      return NextResponse.json({ ok: false, message: "Nicht autorisiert." }, { status: 401 });
+      return NextResponse.json({ ok: false, message: t.api.unauthorized }, { status: 401 });
     }
-    return NextResponse.json({ ok: false, message: "AI-Einstellungen konnten nicht gespeichert werden." }, { status: 500 });
+    return NextResponse.json({ ok: false, message: t.api.aiSettingsSaveFailed }, { status: 500 });
   }
 }

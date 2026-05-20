@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 import argparse
 import json
-from classifier.ocr_engine import text_extrahieren, klassifizieren, bild_text_extrahieren, get_last_vision_debug
+from classifier.ocr_engine import text_extrahieren, klassifizieren, bild_text_extrahieren, get_last_vision_debug, get_last_vision_trace
 
 
-def qualitaet_score_berechnen(text: str, ergebnis: dict) -> int:
+def qualitaet_score_berechnen(text: str, ergebnis: dict, is_image: bool = False) -> int:
     score = 20
-    text_len = len((text or "").strip())
-    if text_len > 1200:
+    if is_image:
+        # Since images skip local OCR text extraction, we give a default 35 points
+        # (equivalent to text_len > 1200) as baseline for a successful vision extraction.
         score += 35
-    elif text_len > 500:
-        score += 25
-    elif text_len > 150:
-        score += 15
+    else:
+        text_len = len((text or "").strip())
+        if text_len > 1200:
+            score += 35
+        elif text_len > 500:
+            score += 25
+        elif text_len > 150:
+            score += 15
 
     if ergebnis.get("lieferant") and ergebnis.get("lieferant") != "Unbekannt":
         score += 15
@@ -29,17 +34,18 @@ def qualitaet_score_berechnen(text: str, ergebnis: dict) -> int:
 def process_invoice_file(datei_pfad: str, api_key: str = "", api_provider: str = "openrouter", api_model: str = "") -> dict:
     text = ""
     lower = datei_pfad.lower()
+    is_image = lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"))
     if lower.endswith(".pdf"):
         try:
             text = text_extrahieren(datei_pfad)
         except Exception:
             text = ""
-    elif lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")):
+    elif is_image:
         # Image flow is direct vision now (no local OCR pre-pass).
         text = ""
 
     ergebnis = klassifizieren(text, api_key=api_key, datei_pfad=datei_pfad, api_provider=api_provider, api_model=api_model)
-    qualitaet_score = qualitaet_score_berechnen(text, ergebnis)
+    qualitaet_score = qualitaet_score_berechnen(text, ergebnis, is_image=is_image)
     preview = (text or "").strip().replace("\r", "")
     preview = preview[:600]
     return {
@@ -50,6 +56,7 @@ def process_invoice_file(datei_pfad: str, api_key: str = "", api_provider: str =
             "ocr_text_preview": preview,
             "mode": "vision_direct_image" if lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")) else "text_ocr",
             "vision_debug": get_last_vision_debug() if lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")) else "",
+            "vision_trace": get_last_vision_trace() if lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")) else {},
         },
     }
 

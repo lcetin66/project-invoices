@@ -2,15 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireRouteSession } from "@/lib/auth";
 import { requestBusinessInsights } from "@/lib/python-api";
 import { getAiSettings, getDashboardStats } from "@/lib/repository";
+import { t } from "@/lang";
 
 export const runtime = "nodejs";
 
-const FALLBACK_INSIGHTS = [
-  "Priorisieren Sie die Top-Kategorie mit monatlichem Budgetlimit und Alarm ab 90%.",
-  "Verhandeln Sie beim häufigsten Lieferanten Mengenrabatt oder Sammelrechnung.",
-  "Analysieren Sie den stärksten Ausgabenmonat und markieren Sie vermeidbare Kostenblöcke.",
-  "Pflegen Sie Ausgangsrechnungen vollständig, um Netto-Cashflow zuverlässig zu steuern."
-];
+const FALLBACK_INSIGHTS = [...t.stats.fallbackInsights];
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
@@ -42,8 +38,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
-      return NextResponse.json({ ok: false, message: "Nicht autorisiert." }, { status: 401 });
+      return NextResponse.json({ ok: false, message: t.api.unauthorized }, { status: 401 });
     }
-    return NextResponse.json({ ok: false, message: "Statistiken konnten nicht geladen werden." }, { status: 500 });
+    return NextResponse.json({ ok: false, message: t.api.statsLoadFailed }, { status: 500 });
   }
 }

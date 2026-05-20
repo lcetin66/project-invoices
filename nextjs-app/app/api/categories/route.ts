@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRouteSession } from "@/lib/auth";
 import { createCategory, listCategories } from "@/lib/repository";
+import { t } from "@/lang";
 
 export const runtime = "nodejs";
 
@@ -13,9 +14,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: true, categories });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
-      return NextResponse.json({ ok: false, message: "Nicht autorisiert." }, { status: 401 });
+      return NextResponse.json({ ok: false, message: t.api.unauthorized }, { status: 401 });
     }
-    return NextResponse.json({ ok: false, message: "Kategorien konnten nicht geladen werden." }, { status: 500 });
+    return NextResponse.json({ ok: false, message: t.api.categoriesLoadFailed }, { status: 500 });
   }
 }
 
@@ -29,15 +30,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const farbe = String(body.farbe ?? "#6366F1").trim() || "#6366F1";
 
     if (!name) {
-      return NextResponse.json({ ok: false, message: "Kategoriename ist erforderlich." }, { status: 400 });
+      return NextResponse.json({ ok: false, message: t.api.categoryNameRequired }, { status: 400 });
     }
 
     await createCategory(name, beschreibung, farbe);
     return NextResponse.json({ ok: true });
   } catch (error) {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
-      return NextResponse.json({ ok: false, message: "Nicht autorisiert." }, { status: 401 });
+      return NextResponse.json({ ok: false, message: t.api.unauthorized }, { status: 401 });
     }
-    return NextResponse.json({ ok: false, message: "Kategorie konnte nicht erstellt werden." }, { status: 500 });
+    return NextResponse.json({ ok: false, message: t.admin.createFailed }, { status: 500 });
   }
 }

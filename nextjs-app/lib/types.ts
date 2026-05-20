@@ -42,3 +42,16 @@ export interface AiSettings {
   ai_model: string;
   ai_api_key: string;
 }
+
+export interface UserProfile {
+  username: string;
+  first_name: string;
+  last_name: string;
+  company_name: string;
+  company_address: string;
+  city: string;
+  postal_code: string;
+  country: string;
+  tax_number: string;
+  vat_id: string;
+}
