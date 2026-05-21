@@ -622,27 +622,17 @@ def _enhance_invoice_image(img):
     if np is not None and cv2 is not None:
         try:
             arr = np.array(out, dtype=np.uint8)
-            gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-
-            # Remove broad shadows/wrinkle shading while keeping printed text.
-            bg_kernel = max(71, (min(gray.shape[:2]) // 7) | 1)
-            background = cv2.GaussianBlur(gray, (bg_kernel, bg_kernel), 0)
-            flattened = cv2.divide(gray, background, scale=238)
-
-            # Local contrast helps faint thermal/receipt text survive wrinkles.
-            clahe = cv2.createCLAHE(clipLimit=1.25, tileGridSize=(8, 8))
-            contrast = clahe.apply(flattened)
-
-            # Gentle denoise, then unsharp mask for characters.
-            denoised = cv2.fastNlMeansDenoising(contrast, None, h=9, templateWindowSize=7, searchWindowSize=21)
-            denoised = cv2.bilateralFilter(denoised, 5, 18, 18)
-            blurred = cv2.GaussianBlur(denoised, (0, 0), 1.0)
-            sharpened = cv2.addWeighted(denoised, 1.38, blurred, -0.38, 0)
-
-            # Keep a white-ish paper background and dark text without hard binarizing.
-            normalized = cv2.normalize(sharpened, None, 18, 255, cv2.NORM_MINMAX)
-            normalized = np.clip(normalized * 1.04 + 5, 0, 255).astype(np.uint8)
-            return Image.fromarray(cv2.cvtColor(normalized, cv2.COLOR_GRAY2RGB))
+            # Safer, non-destructive enhancement to avoid "washed-out/white" failures.
+            lab = cv2.cvtColor(arr, cv2.COLOR_RGB2LAB)
+            l, a, b = cv2.split(lab)
+            clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8, 8))
+            l2 = clahe.apply(l)
+            merged = cv2.merge((l2, a, b))
+            rgb = cv2.cvtColor(merged, cv2.COLOR_LAB2RGB)
+            rgb = cv2.bilateralFilter(rgb, 5, 20, 20)
+            blur = cv2.GaussianBlur(rgb, (0, 0), 0.9)
+            sharp = cv2.addWeighted(rgb, 1.18, blur, -0.18, 0)
+            return Image.fromarray(sharp)
         except Exception:
             pass
 
@@ -726,21 +716,25 @@ def _trim_background_edges(img):
         return img
 
 
-def _detect_tesseract_rotation_degrees(img) -> int | None:
+def _detect_tesseract_rotation_degrees(img) -> tuple[int | None, float]:
     if pytesseract is None:
-        return None
+        return None, 0.0
     try:
         osd = pytesseract.image_to_osd(img.convert("RGB"), config="--psm 0")
     except Exception:
-        return None
+        return None, 0.0
     try:
         match = re.search(r"Rotate:\s*(\d+)", osd or "", re.IGNORECASE)
         if not match:
-            return None
+            return None, 0.0
         degrees = int(match.group(1)) % 360
-        return degrees if degrees in (0, 90, 180, 270) else None
+        conf_match = re.search(r"Orientation confidence:\s*([0-9]+(?:\.[0-9]+)?)", osd or "", re.IGNORECASE)
+        confidence = float(conf_match.group(1)) if conf_match else 0.0
+        if degrees not in (0, 90, 180, 270):
+            return None, confidence
+        return degrees, confidence
     except Exception:
-        return None
+        return None, 0.0
 
 
 def _text_projection_score_for_rotation(img, degrees: int) -> float:
@@ -848,41 +842,59 @@ def _choose_rotation_by_ocr(img, degrees_candidates):
     return None
 
 
+def _refine_upside_down_portrait(img):
+    """If a portrait candidate is upside-down, flip it by 180 using OCR readability."""
+    try:
+        w, h = img.size
+        if h < w:
+            return img, "no_refine_landscape"
+        s0 = _ocr_readability_score_for_rotation(img, 0)
+        s180 = _ocr_readability_score_for_rotation(img, 180)
+        if s180 > s0 + 0.06:
+            return img.rotate(180, expand=True), f"portrait_refine_180_{s0:.2f}_{s180:.2f}"
+        return img, f"portrait_refine_keep_{s0:.2f}_{s180:.2f}"
+    except Exception:
+        return img, "portrait_refine_failed"
+
+
 def _orient_invoice_upright(img):
     """Rotate cropped documents so printed text is horizontal and the receipt top is at 12 o'clock."""
     try:
         out = img.convert("RGB")
         w, h = out.size
-        osd_degrees = _detect_tesseract_rotation_degrees(out)
+        osd_degrees, osd_conf = _detect_tesseract_rotation_degrees(out)
+        # OCR is used only for orientation (OSD), never for extracted text forwarding.
+        # Apply rotation only when confidence is sufficiently high.
+        min_conf = 8.0
+        if osd_degrees in (90, 180, 270) and osd_conf >= min_conf:
+            rotated = out.rotate(360 - osd_degrees, expand=True)
+            refined, reason = _refine_upside_down_portrait(rotated)
+            return refined, f"tesseract_osd_{osd_degrees}_c{osd_conf:.1f}|{reason}"
         if osd_degrees in (90, 180, 270):
-            return out.rotate(360 - osd_degrees, expand=True), f"tesseract_osd_{osd_degrees}"
+            # Keep note and continue with a conservative landscape fallback below.
+            pass
 
-        if w > h * 1.08:
+        # Conservative fallback for very wide receipts:
+        # choose between 90/270 only when readability gain is clear.
+        if w > h * 1.35:
             ocr_choice = _choose_rotation_by_ocr(out, (90, 270))
             if ocr_choice is not None:
-                best_degrees, _ = ocr_choice
-                return out.rotate(best_degrees, expand=True), f"ocr_landscape_{best_degrees}"
-            candidates = [(90, _text_projection_score_for_rotation(out, 90)), (270, _text_projection_score_for_rotation(out, 270))]
-            best_degrees, best_score = max(candidates, key=lambda item: item[1])
-            if best_score <= 0:
-                best_degrees = 270
-            return out.rotate(best_degrees, expand=True), f"landscape_{best_degrees}"
+                best_degrees, best_score = ocr_choice
+                rotated = out.rotate(best_degrees, expand=True)
+                refined, reason = _refine_upside_down_portrait(rotated)
+                return refined, f"ocr_landscape_{best_degrees}_s{best_score:.2f}|{reason}"
+            c90 = _text_projection_score_for_rotation(out, 90)
+            c270 = _text_projection_score_for_rotation(out, 270)
+            if abs(c90 - c270) >= 0.08:
+                best_degrees = 90 if c90 > c270 else 270
+                rotated = out.rotate(best_degrees, expand=True)
+                refined, reason = _refine_upside_down_portrait(rotated)
+                return refined, f"proj_landscape_{best_degrees}_{c90:.2f}_{c270:.2f}|{reason}"
 
-        if h >= w:
-            ocr_choice = _choose_rotation_by_ocr(out, (0, 180))
-            if ocr_choice is not None:
-                best_degrees, _ = ocr_choice
-                if best_degrees:
-                    return out.rotate(best_degrees, expand=True), f"ocr_portrait_{best_degrees}"
-                return out, "ocr_portrait_0"
-            candidates = [
-                (0, _text_projection_score_for_rotation(out, 0)),
-                (180, _text_projection_score_for_rotation(out, 180)),
-            ]
-            best_degrees, best_score = max(candidates, key=lambda item: item[1])
-            if best_degrees == 180 and best_score > candidates[0][1] + 0.04:
-                return out.rotate(180, expand=True), "portrait_180"
-        return out, "none"
+        if osd_degrees in (90, 180, 270):
+            return out, f"tesseract_osd_lowconf_{osd_degrees}_c{osd_conf:.1f}"
+        refined, reason = _refine_upside_down_portrait(out)
+        return refined, f"keep_original|{reason}"
     except Exception:
         return img, "orientation_failed"
 
@@ -894,13 +906,30 @@ def prepare_invoice_image(img):
     try:
         src = ImageOps.exif_transpose(img) if ImageOps is not None else img
         src = src.convert("RGB")
+
+        # Baseline: orientation only on original frame (most robust).
+        base_oriented, _ = _orient_invoice_upright(src)
+        base_score = _ocr_readability_score_for_rotation(base_oriented, 0)
+        out = _enhance_invoice_image(base_oriented)
+
+        # Optional crop/warp candidates must clearly beat baseline.
         warped = _perspective_warp_document(src)
-        if warped is None:
-            warped = _crop_rechnung_region(src)
-        out = _enhance_invoice_image(warped)
-        out = _trim_background_edges(out)
-        out = _trim_background_edges(out)
-        out, _ = _orient_invoice_upright(out)
+        cropped = _crop_rechnung_region(src)
+        best_score = base_score
+        best_img = out
+        for cand in (warped, cropped):
+            if cand is None:
+                continue
+            candidate = _enhance_invoice_image(cand)
+            candidate = _trim_background_edges(candidate)
+            candidate_oriented, _ = _orient_invoice_upright(candidate)
+            score = _ocr_readability_score_for_rotation(candidate_oriented, 0)
+            # Accept only if meaningfully better to avoid floor/background false positives.
+            if score >= max(0.18, best_score + 0.12):
+                best_score = score
+                best_img = candidate_oriented
+
+        out = best_img
 
         w, h = out.size
         max_side = 2600

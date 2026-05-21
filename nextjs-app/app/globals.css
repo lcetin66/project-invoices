@@ -706,7 +706,8 @@ body {
 }
 .edit-layout > * { min-width: 0; }
 .edit-preview {
-    min-height: 760px;
+    min-height: 0;
+    height: clamp(520px, 72vh, 840px);
     border: 2px solid var(--border);
     border-radius: 6px;
     background: #f8fafc;
@@ -717,6 +718,7 @@ body {
 .edit-preview-toolbar {
     display: flex;
     justify-content: flex-end;
+    gap: 8px;
     padding: 8px;
     border-bottom: 1px solid var(--border);
     background: #ffffff;
@@ -737,20 +739,38 @@ body {
     border-color: #7c3aed;
     color: #5b3fd6;
 }
+.zoom-btn:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+}
 .edit-doc-wrap {
     flex: 1;
     overflow: auto;
     background: #f8fafc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
 }
 .edit-doc-wrap.zoomed {
-    cursor: zoom-out;
+    cursor: move;
+    overflow: hidden;
 }
-.edit-doc { width: 100%; border: 0; display: block; }
+.edit-doc {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    display: block;
+}
 .edit-doc-pdf { height: 100%; min-height: 700px; }
-.edit-doc-image { height: auto; object-fit: contain; }
+.edit-doc-image {
+    object-fit: contain;
+    object-position: center;
+    background: #ffffff;
+}
 .edit-doc-wrap.zoomed .edit-doc {
     transform: scale(1.65);
-    transform-origin: top left;
+    transform-origin: var(--zoom-x, 50%) var(--zoom-y, 50%);
 }
 .edit-grid {
     display: grid;
@@ -850,7 +870,7 @@ body {
     .rechnungen-grid { grid-template-columns: 1fr; }
     .rechnungen-layout { grid-template-columns: 1fr; }
     .edit-layout { grid-template-columns: 1fr; }
-    .edit-preview { min-height: 520px; }
+    .edit-preview { height: clamp(420px, 62vh, 640px); }
     .edit-grid { grid-template-columns: 1fr; }
     .ergebnis-grid { grid-template-columns: 1fr 1fr; }
     .page-eingabe, .page-admin { padding: 0; }

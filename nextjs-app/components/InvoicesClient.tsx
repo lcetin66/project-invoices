@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Category, Invoice } from "@/lib/types";
 import { t, txt } from "@/lang";
 
@@ -244,6 +244,7 @@ export function InvoicesClient() {
   const [preview, setPreview] = useState<{ file: string; type: string } | null>(null);
   const closePreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [editZoom, setEditZoom] = useState(false);
+  const [zoomFocus, setZoomFocus] = useState({ x: 50, y: 50 });
 
   const [deleteModal, setDeleteModal] = useState<{ id: number; text: string } | null>(null);
 
@@ -312,7 +313,18 @@ export function InvoicesClient() {
     setEditingId(invoice.id);
     setEditState(toEdit(invoice));
     setEditZoom(false);
+    setZoomFocus({ x: 50, y: 50 });
     setStatus(null);
+  }
+
+  function onZoomMove(event: MouseEvent<HTMLDivElement>): void {
+    if (!editZoom) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const rawX = ((event.clientX - rect.left) / Math.max(rect.width, 1)) * 100;
+    const rawY = ((event.clientY - rect.top) / Math.max(rect.height, 1)) * 100;
+    const x = Math.max(0, Math.min(100, rawX));
+    const y = Math.max(0, Math.min(100, rawY));
+    setZoomFocus({ x, y });
   }
 
   function openPreview(file: string, type: string): void {
@@ -412,9 +424,9 @@ export function InvoicesClient() {
                 <button
                   type="button"
                   className={`zoom-btn ${editZoom ? "active" : ""}`}
-                  onClick={() => setEditZoom((prev) => !prev)}
-                  title={editZoom ? t.invoices.zoomReset : t.invoices.zoomIn}
-                  aria-label={editZoom ? t.invoices.zoomReset : t.invoices.zoomIn}
+                  onClick={() => setEditZoom(true)}
+                  title={t.invoices.zoomIn}
+                  aria-label={t.invoices.zoomIn}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <circle cx="11" cy="11" r="7" />
@@ -423,8 +435,36 @@ export function InvoicesClient() {
                     <line x1="8" y1="11" x2="14" y2="11" />
                   </svg>
                 </button>
+                <button
+                  type="button"
+                  className="zoom-btn"
+                  onClick={() => {
+                    setEditZoom(false);
+                    setZoomFocus({ x: 50, y: 50 });
+                  }}
+                  title={t.invoices.zoomReset}
+                  aria-label={t.invoices.zoomReset}
+                  disabled={!editZoom}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="11" cy="11" r="7" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    <line x1="8" y1="11" x2="14" y2="11" />
+                  </svg>
+                </button>
               </div>
-              <div className={`edit-doc-wrap ${editZoom ? "zoomed" : ""}`}>
+              <div
+                className={`edit-doc-wrap ${editZoom ? "zoomed" : ""}`}
+                onMouseMove={onZoomMove}
+                style={
+                  editZoom
+                    ? ({
+                        ["--zoom-x" as string]: `${zoomFocus.x}%`,
+                        ["--zoom-y" as string]: `${zoomFocus.y}%`
+                      } as React.CSSProperties)
+                    : undefined
+                }
+              >
                 {editingIsPdf ? (
                   <object data={`${editingInvoiceFileUrl}#page=1&view=FitH`} type="application/pdf" className="edit-doc edit-doc-pdf" />
                 ) : (
