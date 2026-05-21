@@ -1,0 +1,31 @@
+.admin-debug-tools {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.admin-debug-tools-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-switch-row {
+  justify-content: space-between;
+  width: 100%;
+}
+
+.user-profile-page .user-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.user-col-span-2 {
+  grid-column: span 2;
+}
+
+.user-section-title {
+  margin-top: 16px !important;
+}
