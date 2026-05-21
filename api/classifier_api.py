@@ -6,6 +6,7 @@ import sys
 import uuid
 import json
 import requests
+import re
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -15,6 +16,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 from classifier.categories import STANDARDS_KATEGORIEN
 from main import process_invoice_file
+from classifier.ocr_engine import prepare_invoice_image_file_inplace
 
 app = Flask(__name__)
 CORS(app)
@@ -24,6 +26,26 @@ UPLOAD_ORDNER = os.path.join(os.path.dirname(__file__), '..', 'uploads')
 os.makedirs(UPLOAD_ORDNER, exist_ok=True)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff", ".webp", ".heic", ".heif"}
+
+
+def _normalize_api_model(api_provider: str, api_model: str) -> str:
+    provider = (api_provider or "openrouter").strip().lower()
+    raw = (api_model or "").strip()
+    if not raw:
+        return "gpt-4o-mini" if provider == "openai" else "openai/gpt-4o-mini"
+    return raw
+
+
+def _sicherer_dateiname(original_name: str) -> str:
+    """Normalize uploaded filename to URL-safe ASCII-ish characters."""
+    base = os.path.basename(original_name or "datei")
+    stem, ext = os.path.splitext(base)
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-") or "datei"
+    ext = re.sub(r"[^A-Za-z0-9.]+", "", ext.lower())
+    if len(ext) > 10:
+        ext = ""
+    return f"{stem}{ext}"
 
 
 @app.route('/api/klassifizieren', methods=['POST'])
@@ -37,23 +59,30 @@ def klassifiziere_rechnung():
         return jsonify({'fehler': 'Keine Datei ausgewahlt!'}), 400
 
     # Datei speichern
-    datei_name = f"{uuid.uuid4().hex}_{datei.filename}"
+    safe_original = _sicherer_dateiname(datei.filename or "datei")
+    datei_name = f"{uuid.uuid4().hex}_{safe_original}"
     datei_pfad = os.path.join(UPLOAD_ORDNER, datei_name)
     datei.save(datei_pfad)
+    preprocess_debug = {}
+    if os.path.splitext(datei_pfad)[1].lower() in IMAGE_EXTS:
+        preprocess_debug = prepare_invoice_image_file_inplace(datei_pfad)
 
     # Optional: API-Key aus dem Web-Frontend
     api_key = (request.form.get('api_key') or "").strip()
     api_provider = (request.form.get('api_provider') or "openrouter").strip().lower()
-    api_model = (request.form.get('api_model') or "").strip()
+    api_model = _normalize_api_model(api_provider, request.form.get('api_model') or "")
 
     # Gemeinsamer Motor aus main.py (CLI + API)
     out = process_invoice_file(datei_pfad, api_key=api_key, api_provider=api_provider, api_model=api_model)
+    debug = out.get('debug', {})
+    debug['image_preprocess'] = preprocess_debug
 
     return jsonify({
         'erfolgreich': True,
         'datei_name': datei_name,
         'ergebnis': out['ergebnis'],
         'qualitaet_score': out['qualitaet_score'],
+        'debug': debug,
     })
 
 
@@ -91,7 +120,7 @@ def business_insights():
     stats = payload.get('stats', {})
     api_key = (payload.get('api_key') or "").strip()
     api_provider = (payload.get('api_provider') or "openrouter").strip().lower()
-    api_model = (payload.get('api_model') or "").strip()
+    api_model = _normalize_api_model(api_provider, payload.get('api_model') or "")
 
     if not stats:
         return jsonify({
@@ -137,7 +166,7 @@ Kennzahlen:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": api_model or "gpt-4o-mini",
+                    "model": api_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0,
                 },
@@ -151,7 +180,7 @@ Kennzahlen:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": api_model or "openai/gpt-4o-mini",
+                    "model": api_model,
                     "messages": [{"role": "user", "content": prompt}],
                 },
                 timeout=20,
@@ -178,7 +207,27 @@ def hochgeladen_anzeigen(datei_name):
     return send_from_directory(UPLOAD_ORDNER, datei_name)
 
 
+@app.route('/api/datei-loeschen', methods=['POST'])
+def datei_loeschen():
+    """Delete one uploaded file from API upload folder."""
+    payload = request.get_json(silent=True) or {}
+    name = os.path.basename((payload.get('name') or '').strip())
+    if not name:
+        return jsonify({'erfolgreich': False, 'fehler': 'name fehlt'}), 400
+
+    pfad = os.path.join(UPLOAD_ORDNER, name)
+    if os.path.isfile(pfad):
+        try:
+            os.remove(pfad)
+            return jsonify({'erfolgreich': True, 'geloescht': True})
+        except Exception as ex:
+            return jsonify({'erfolgreich': False, 'fehler': str(ex)}), 500
+    return jsonify({'erfolgreich': True, 'geloescht': False})
+
+
 if __name__ == '__main__':
     print("Rechnungs-Klassifizierer-API startet...")
     print("Aufruf: python api/classifier_api.py")
-    app.run(host='127.0.0.1', port=5000, debug=True)
+    host = os.getenv("CLASSIFIER_API_HOST", "0.0.0.0")
+    port = int(os.getenv("CLASSIFIER_API_PORT", "8000"))
+    app.run(host=host, port=port, debug=False)
