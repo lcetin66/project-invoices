@@ -1,36 +1,36 @@
 # RechnungsManager (Next.js + Python AI)
 
-Bu proje artık **Next.js frontend/backend (App Router)** üzerinde çalışır.
-AI sınıflandırma akışı ise aynen **Python Flask API** (`api/classifier_api.py`) tarafında kalır.
+This project runs on a **Next.js frontend/backend (App Router)** stack.
+The AI classification pipeline is handled by the **Python Flask API** in `api/classifier_api.py`.
 
-## Mimari
+## Architecture
 
-- `nextjs-app/`: Yeni Next.js uygulaması (login, upload, invoices, admin)
-- `api/classifier_api.py`: Python AI sınıflandırma API'si
-- `classifier/`: OCR + AI sınıflandırma motoru
-- `sql/schema.sql`: MySQL şeması
-- `uploads/`: Yüklenen dosyalar (Next.js ve Python tarafından ortak kullanılır)
+- `nextjs-app/`: Next.js application (login, upload, invoices, admin)
+- `api/classifier_api.py`: Python AI classification API
+- `classifier/`: image preprocessing + OCR/AI extraction engine
+- `sql/schema.sql`: MySQL schema
+- `uploads/`: shared upload directory (used by both Next.js and Python)
 
-## Gereksinimler
+## Requirements
 
 - Python 3.8+
 - Node.js 20+
-- MySQL (XAMPP/MySQL Server olabilir)
+- MySQL server
 
-## 1) Veritabanını hazırlama
+## 1) Prepare the database
 
-1. MySQL'i başlat.
-2. `sql/schema.sql` dosyasını içe aktar.
+1. Start MySQL.
+2. Import `sql/schema.sql`.
 
-Örnek (terminal):
+Example:
 
 ```bash
 mysql -u root -p < sql/schema.sql
 ```
 
-## 2) Python AI API kurulum ve çalıştırma
+## 2) Set up and run the Python AI API
 
-Proje kökünde:
+From the project root:
 
 ```bash
 python3.13 -m venv .venv
@@ -38,30 +38,30 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-API başlat:
+Start the API:
 
 ```bash
 ./scripts/start_api.sh
 ```
 
-Varsayılan API adresi:
+Default API URL:
 
 - `http://127.0.0.1:8000`
 
-Kontrol:
+Health check:
 
 ```bash
 curl -i http://127.0.0.1:8000/api/kategorien
 ```
 
-## 3) Next.js uygulamasını ayarlama
+## 3) Set up the Next.js app
 
 ```bash
 cd nextjs-app
 cp .env.example .env.local
 ```
 
-`nextjs-app/.env.local` içinde en az şu değerleri kontrol et:
+At minimum, verify these values in `nextjs-app/.env.local`:
 
 ```env
 DB_HOST=127.0.0.1
@@ -71,34 +71,34 @@ DB_USER=root
 DB_PASS=
 
 CLASSIFIER_API_URL=http://127.0.0.1:8000
-SESSION_SECRET=buraya-uzun-rastgele-bir-secret-yaz
+SESSION_SECRET=replace-with-a-long-random-secret
 UPLOAD_DIR=../uploads
 ```
 
-Ardından bağımlılık kur:
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-Geliştirme sunucusunu başlat:
+Start the dev server:
 
 ```bash
 npm run dev
 ```
 
-Uygulama adresi:
+App URL:
 
 - `http://localhost:3000`
 
-## 4) Giriş
+## 4) Login
 
-Varsayılan kullanıcı:
+Default user:
 
-- Benutzername: `admin`
-- Passwort: `admin123`
+- Username: `admin`
+- Password: `admin123`
 
-## 5) Üretim (production)
+## 5) Production
 
 ```bash
 cd nextjs-app
@@ -106,60 +106,60 @@ npm run build
 npm run start
 ```
 
-## Özellik eşlemesi (PHP -> Next.js)
+## Feature Mapping (PHP -> Next.js)
 
 - Login/Logout: Next API (`/api/auth/*`) + cookie session
-- Rechnung Upload + AI classify: Next `/api/invoices` -> Python `/api/klassifizieren`
-- Rechnungen listeleme/düzenleme/silme: Next `/api/invoices`, `/api/invoices/[id]`
-- Kategori + bütçe yönetimi: Next `/api/categories*`
-- AI ayarları (provider/model/key): Next `/api/settings/ai`
+- Invoice upload + AI classify: Next `/api/invoices` -> Python `/api/klassifizieren`
+- Invoice list/edit/delete: Next `/api/invoices`, `/api/invoices/[id]`
+- Category + budget management: Next `/api/categories*`
+- AI settings (provider/model/key): Next `/api/settings/ai`
 - KPI + AI insights: Next `/api/stats` -> Python `/api/business_insights`
 
-## Notlar
+## Notes
 
-- Python API kapalıysa upload/classification çalışmaz.
-- Dosyalar `uploads/` klasöründe tutulur.
-- AI key'i Admin sayfasından kaydedebilirsin.
-- Proje PHP içermez; tek akış Next.js + Python API'dir.
+- Upload/classification will not work if the Python API is down.
+- Files are stored in `uploads/`.
+- AI key can be saved from the Admin page.
+- The active stack is Next.js + Python API.
 
-## Sorun giderme
+## Troubleshooting
 
-1. `Nicht autorisiert` hatası:
-- Tekrar login ol.
-- Tarayıcıda cookie engeli olmadığını kontrol et.
+1. `Nicht autorisiert` error:
+- Log in again.
+- Make sure browser cookies are not blocked.
 
-2. `Classifier API error` hatası:
-- Python API'nin açık olduğundan emin ol (`curl` ile test et).
-- `CLASSIFIER_API_URL` değerini kontrol et.
+2. `Classifier API error`:
+- Confirm the Python API is running (test with `curl`).
+- Check `CLASSIFIER_API_URL`.
 
-3. DB bağlantı hatası:
-- `nextjs-app/.env.local` içindeki DB ayarlarını doğrula.
-- `firma_rechnungen` veritabanının oluştuğunu kontrol et.
+3. Database connection error:
+- Verify DB settings in `nextjs-app/.env.local`.
+- Ensure the `firma_rechnungen` database exists.
 
-## Hosting (Production) Hızlı Kurulum
+## Hosting (Production) Quick Setup
 
-Sunucuda proje dizininde:
+On the server, in the project directory:
 
 ```bash
 cp nextjs-app/.env.example nextjs-app/.env.local
-# nextjs-app/.env.local degerlerini doldur
-# kok dizindeki .env dosyasina OPENAI_API_KEY vb degerleri gir
+# fill values in nextjs-app/.env.local
+# set OPENAI_API_KEY and other secrets in root .env
 ```
 
-Kurulum + build:
+Install + build:
 
 ```bash
 ./scripts/hosting_bootstrap.sh
 ```
 
-PM2 ile başlatma:
+Start with PM2:
 
 ```bash
 ./scripts/hosting_start.sh
 pm2 status
 ```
 
-PM2 autostart:
+Enable PM2 autostart:
 
 ```bash
 pm2 startup
