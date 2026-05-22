@@ -44,6 +44,17 @@ export function NavBar({ username }: NavBarProps) {
       )
     },
     {
+      href: "/editor",
+      label: "Editör",
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M4 7h16M7 4v16M20 17H7M17 4v16" />
+          <path d="M15 9a4 4 0 1 1-2.6 7" />
+          <path d="M15 9h-4M15 9v-4" />
+        </svg>
+      )
+    },
+    {
       href: "/user",
       label: t.nav.user,
       icon: (

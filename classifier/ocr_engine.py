@@ -622,14 +622,14 @@ def _enhance_invoice_image(img):
     if np is not None and cv2 is not None:
         try:
             arr = np.array(out, dtype=np.uint8)
-            # Safer, non-destructive enhancement to avoid "washed-out/white" failures.
+            # Stronger enhancement for difficult receipt photos.
             lab = cv2.cvtColor(arr, cv2.COLOR_RGB2LAB)
             l, a, b = cv2.split(lab)
-            clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8, 8))
+            clahe = cv2.createCLAHE(clipLimit=1.6, tileGridSize=(8, 8))
             l2 = clahe.apply(l)
             merged = cv2.merge((l2, a, b))
             rgb = cv2.cvtColor(merged, cv2.COLOR_LAB2RGB)
-            rgb = cv2.bilateralFilter(rgb, 5, 20, 20)
+            rgb = cv2.bilateralFilter(rgb, 5, 22, 22)
             blur = cv2.GaussianBlur(rgb, (0, 0), 0.9)
             sharp = cv2.addWeighted(rgb, 1.18, blur, -0.18, 0)
             return Image.fromarray(sharp)
@@ -637,10 +637,10 @@ def _enhance_invoice_image(img):
             pass
 
     if ImageOps is not None:
-        out = ImageOps.autocontrast(out, cutoff=1)
+        out = ImageOps.autocontrast(out, cutoff=0.2)
     if ImageEnhance is not None:
         out = ImageEnhance.Contrast(out).enhance(1.14)
-        out = ImageEnhance.Sharpness(out).enhance(1.35)
+        out = ImageEnhance.Sharpness(out).enhance(1.22)
     return out
 
 

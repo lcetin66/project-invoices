@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { FormEvent, type DragEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, type DragEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Invoice } from "@/lib/types";
 import { t, txt } from "@/lang";
 
@@ -42,6 +42,172 @@ type DashboardClientProps = {
   username: string;
 };
 
+type Point = {
+  x: number;
+  y: number;
+};
+
+type EditorDragState =
+  | { type: "point"; index: number }
+  | { type: "rotate"; startAngle: number; startRotation: number }
+  | { type: "pan"; startX: number; startY: number; startPanX: number; startPanY: number }
+  | null;
+
+const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "tif", "tiff", "webp", "heic", "heif"]);
+
+function isImageFile(file: File): boolean {
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  return file.type.toLowerCase().startsWith("image/") || IMAGE_EXTENSIONS.has(extension);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function distance(a: Point, b: Point): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function pointerInElement(event: PointerEvent | ReactPointerEvent, element: HTMLElement): Point {
+  const rect = element.getBoundingClientRect();
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top
+  };
+}
+
+function samplePixel(source: Uint8ClampedArray, width: number, height: number, x: number, y: number): [number, number, number, number] {
+  const safeX = clamp(x, 0, width - 1);
+  const safeY = clamp(y, 0, height - 1);
+  const x0 = Math.floor(safeX);
+  const y0 = Math.floor(safeY);
+  const x1 = Math.min(width - 1, x0 + 1);
+  const y1 = Math.min(height - 1, y0 + 1);
+  const tx = safeX - x0;
+  const ty = safeY - y0;
+  const i00 = (y0 * width + x0) * 4;
+  const i10 = (y0 * width + x1) * 4;
+  const i01 = (y1 * width + x0) * 4;
+  const i11 = (y1 * width + x1) * 4;
+  const out: [number, number, number, number] = [0, 0, 0, 0];
+
+  for (let channel = 0; channel < 4; channel += 1) {
+    const top = source[i00 + channel] * (1 - tx) + source[i10 + channel] * tx;
+    const bottom = source[i01 + channel] * (1 - tx) + source[i11 + channel] * tx;
+    out[channel] = top * (1 - ty) + bottom * ty;
+  }
+
+  return out;
+}
+
+function imageFromFile(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Bild konnte nicht gelesen werden."));
+    };
+    image.src = url;
+  });
+}
+
+async function looksLikeCleanInvoiceImage(file: File): Promise<boolean> {
+  const image = await imageFromFile(file);
+  const maxEdge = 360;
+  const scale = Math.min(maxEdge / image.naturalWidth, maxEdge / image.naturalHeight, 1);
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return false;
+
+  context.drawImage(image, 0, 0, width, height);
+  const data = context.getImageData(0, 0, width, height).data;
+  const border = Math.max(4, Math.round(Math.min(width, height) * 0.05));
+  let white = 0;
+  let total = 0;
+  let borderWhite = 0;
+  let borderTotal = 0;
+  let borderR = 0;
+  let borderG = 0;
+  let borderB = 0;
+  let minX = width;
+  let minY = height;
+  let maxX = 0;
+  let maxY = 0;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      const r = data[index];
+      const g = data[index + 1];
+      const b = data[index + 2];
+      const brightness = (r + g + b) / 3;
+      const saturation = Math.max(r, g, b) - Math.min(r, g, b);
+      const isWhite = brightness > 232 && saturation < 36;
+      const isContent = brightness < 218 || saturation > 58;
+
+      total += 1;
+      if (isWhite) white += 1;
+      if (x < border || y < border || x >= width - border || y >= height - border) {
+        borderTotal += 1;
+        if (isWhite) borderWhite += 1;
+        borderR += r;
+        borderG += g;
+        borderB += b;
+      }
+      if (isContent) {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+  }
+
+  const whiteRatio = white / Math.max(1, total);
+  const borderWhiteRatio = borderWhite / Math.max(1, borderTotal);
+  const contentWidthRatio = (maxX - minX + 1) / Math.max(1, width);
+  const contentHeightRatio = (maxY - minY + 1) / Math.max(1, height);
+  const contentTouchesPage = minX < width * 0.18 && maxX > width * 0.72 && minY < height * 0.18 && maxY > height * 0.72;
+  const avgBorderR = borderR / Math.max(1, borderTotal);
+  const avgBorderG = borderG / Math.max(1, borderTotal);
+  const avgBorderB = borderB / Math.max(1, borderTotal);
+  const dominantBorder = Math.max(avgBorderR, avgBorderG, avgBorderB);
+  const borderSpread = dominantBorder - Math.min(avgBorderR, avgBorderG, avgBorderB);
+
+  // Sadece gercekten "duz/temiz tarama"ysa editoru atla.
+  const likelyCleanScan =
+    borderWhiteRatio > 0.86 &&
+    whiteRatio > 0.72 &&
+    contentWidthRatio > 0.74 &&
+    contentHeightRatio > 0.74 &&
+    contentTouchesPage &&
+    borderSpread < 16;
+
+  // Arka planli, egik veya kadraj zayif goruntu: editor ac.
+  const likelyBackgroundOrSkewed =
+    borderWhiteRatio < 0.76 ||
+    whiteRatio < 0.66 ||
+    borderSpread > 19 ||
+    !contentTouchesPage ||
+    contentWidthRatio < 0.7 ||
+    contentHeightRatio < 0.7;
+
+  if (likelyCleanScan) return true;
+  if (likelyBackgroundOrSkewed) return false;
+
+  // Belirsiz durumda guvenli tercih: editor ac.
+  return false;
+}
+
 function categoryColor(name: string): string {
   const fallback = "#95A5A6";
   const map: Record<string, string> = {
@@ -74,6 +240,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
   });
   const [file, setFile] = useState<File | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [editorFile, setEditorFile] = useState<File | null>(null);
   const [beschreibung, setBeschreibung] = useState("");
   const [rechnungTyp, setRechnungTyp] = useState("eingang");
   const [rechnungsdatum, setRechnungsdatum] = useState("");
@@ -291,9 +458,8 @@ export function DashboardClient({ username }: DashboardClientProps) {
     });
   }
 
-  async function handleUpload(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (!file) {
+  async function uploadInvoice(selectedFile: File | null): Promise<void> {
+    if (!selectedFile) {
       setStatus({ type: "error", text: t.dashboard.selectFileError });
       return;
     }
@@ -307,7 +473,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
       uploadStartedAt: null,
       processingStartedAt: null
     };
-    pushDebug("info", t.dashboard.newProcess, file.name || t.common.unknown);
+    pushDebug("info", t.dashboard.newProcess, selectedFile.name || t.common.unknown);
     setProgressState({
       open: true,
       title: t.dashboard.progressTitle,
@@ -317,7 +483,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
 
     try {
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", selectedFile);
       formData.append("beschreibung", beschreibung);
       formData.append("rechnung_typ", rechnungTyp);
       if (rechnungsdatum) formData.append("rechnungsdatum", rechnungsdatum);
@@ -350,7 +516,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
         total: String(data.ergebnis?.brutto_betrag ?? "0"),
         quality: Number(data.qualitaet_score ?? 0)
       });
-      setLastFileName(String(data.datei_name ?? file.name));
+      setLastFileName(String(data.datei_name ?? selectedFile.name));
 
       setFile(null);
       setBeschreibung("");
@@ -385,6 +551,11 @@ export function DashboardClient({ username }: DashboardClientProps) {
     }
   }
 
+  async function handleUpload(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    await uploadInvoice(file);
+  }
+
   function applySelectedFile(nextFile: File | null): void {
     setFile(nextFile);
     if (!nextFile || !fileInputRef.current) return;
@@ -395,6 +566,39 @@ export function DashboardClient({ username }: DashboardClientProps) {
     } catch {
       // Some browsers block FileList assignment; state still drives upload.
     }
+  }
+
+  async function handleIncomingFile(nextFile: File | null): Promise<void> {
+    applySelectedFile(nextFile);
+    if (!nextFile) return;
+
+    if (!isImageFile(nextFile)) {
+      await uploadInvoice(nextFile);
+      return;
+    }
+
+    setStatus({ type: "ok", text: "Resim kontrol ediliyor..." });
+    try {
+      const clean = await looksLikeCleanInvoiceImage(nextFile);
+      if (clean) {
+        pushDebug("info", "Temiz resim algilandi", "Editor acilmadan dogrudan isleme alindi.");
+        await uploadInvoice(nextFile);
+      } else {
+        pushDebug("info", "Arka planli resim algilandi", "Editor popup aciliyor.");
+        setStatus(null);
+        setEditorFile(nextFile);
+      }
+    } catch (error) {
+      pushDebug("info", "Resim kontrolu atlandi", error instanceof Error ? error.message : "");
+      setStatus(null);
+      setEditorFile(nextFile);
+    }
+  }
+
+  async function acceptEditedFile(editedFile: File): Promise<void> {
+    setEditorFile(null);
+    applySelectedFile(editedFile);
+    await uploadInvoice(editedFile);
   }
 
   function onDragEnter(event: DragEvent<HTMLFormElement>): void {
@@ -421,7 +625,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
     setIsDragOver(false);
     const droppedFiles = event.dataTransfer?.files;
     if (droppedFiles && droppedFiles.length > 0) {
-      applySelectedFile(droppedFiles[0]);
+      void handleIncomingFile(droppedFiles[0]);
     }
   }
 
@@ -444,6 +648,14 @@ export function DashboardClient({ username }: DashboardClientProps) {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {editorFile ? (
+        <DashboardImageEditorModal
+          file={editorFile}
+          onCancel={() => setEditorFile(null)}
+          onConfirm={(editedFile) => void acceptEditedFile(editedFile)}
+        />
       ) : null}
 
       <section className="upload-section">
@@ -486,7 +698,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
               type="file"
               ref={fileInputRef}
               accept=".pdf,.jpg,.jpeg,.png,.gif,.tif,.tiff,.webp,.heic,.heif"
-              onChange={(event) => applySelectedFile(event.target.files?.[0] ?? null)}
+              onChange={(event) => void handleIncomingFile(event.target.files?.[0] ?? null)}
               required
             />
           </label>
@@ -656,6 +868,465 @@ export function DashboardClient({ username }: DashboardClientProps) {
         </div>
       </section>
       ) : null}
+    </div>
+  );
+}
+
+function getContainedImageRect(stage: Point, image: Point): { left: number; top: number; width: number; height: number } {
+  if (!image.x || !image.y || !stage.x || !stage.y) {
+    return { left: 0, top: 0, width: 0, height: 0 };
+  }
+  const scale = Math.min(stage.x / image.x, stage.y / image.y);
+  const width = image.x * scale;
+  const height = image.y * scale;
+  return {
+    left: (stage.x - width) / 2,
+    top: (stage.y - height) / 2,
+    width,
+    height
+  };
+}
+
+function defaultEditorPoints(stage: Point, image: Point): Point[] {
+  const rect = getContainedImageRect(stage, image);
+  const insetX = Math.max(16, rect.width * 0.06);
+  const insetY = Math.max(16, rect.height * 0.06);
+  return [
+    { x: rect.left + insetX, y: rect.top + insetY },
+    { x: rect.left + rect.width - insetX, y: rect.top + insetY },
+    { x: rect.left + rect.width - insetX, y: rect.top + rect.height - insetY },
+    { x: rect.left + insetX, y: rect.top + rect.height - insetY }
+  ];
+}
+
+function imageCenterOnStage(stage: Point, pan: Point): Point {
+  return { x: stage.x / 2 + pan.x, y: stage.y / 2 + pan.y };
+}
+
+function localToStagePoint(local: Point, stage: Point, pan: Point, rotationDeg: number): Point {
+  const center = imageCenterOnStage(stage, pan);
+  const rad = (rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return {
+    x: center.x + local.x * cos - local.y * sin,
+    y: center.y + local.x * sin + local.y * cos
+  };
+}
+
+function stageToLocalPoint(stagePoint: Point, stage: Point, pan: Point, rotationDeg: number): Point {
+  const center = imageCenterOnStage(stage, pan);
+  const dx = stagePoint.x - center.x;
+  const dy = stagePoint.y - center.y;
+  const rad = (-rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return {
+    x: dx * cos - dy * sin,
+    y: dx * sin + dy * cos
+  };
+}
+
+function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), "image/png", 0.96));
+}
+
+type DashboardImageEditorModalProps = {
+  file: File;
+  onCancel: () => void;
+  onConfirm: (file: File) => void;
+};
+
+function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImageEditorModalProps) {
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const dragRef = useRef<EditorDragState>(null);
+  const [imageUrl, setImageUrl] = useState("");
+  const [imageSize, setImageSize] = useState<Point>({ x: 0, y: 0 });
+  const [stageSize, setStageSize] = useState<Point>({ x: 720, y: 520 });
+  const [points, setPoints] = useState<Point[]>([]);
+  const [rotation, setRotation] = useState(0);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
+  const [brightness, setBrightness] = useState(100);
+  const [contrast, setContrast] = useState(100);
+  const [isBW, setIsBW] = useState(false);
+  const [error, setError] = useState("");
+  const loadedRef = useRef(false);
+
+  const imageRect = useMemo(() => getContainedImageRect(stageSize, imageSize), [stageSize, imageSize]);
+  const displayedImageSize = {
+    x: imageRect.width * zoom,
+    y: imageRect.height * zoom
+  };
+  const pointsStage = useMemo(
+    () => points.map((point) => localToStagePoint(point, stageSize, pan, rotation)),
+    [points, stageSize, pan, rotation]
+  );
+  const polygon = pointsStage.map((point) => `${point.x},${point.y}`).join(" ");
+  const center = imageCenterOnStage(stageSize, pan);
+  const rotateHandle = {
+    x: center.x + Math.sin((rotation * Math.PI) / 180) * -120,
+    y: center.y + Math.cos((rotation * Math.PI) / 180) * -120
+  };
+
+  useEffect(() => {
+    loadedRef.current = false;
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      loadedRef.current = true;
+      imageRef.current = image;
+      setError("");
+      setImageUrl(url);
+      setImageSize({ x: image.naturalWidth, y: image.naturalHeight });
+      setRotation(0);
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      setBrightness(100);
+      setContrast(100);
+      setIsBW(false);
+    };
+    image.onerror = () => {
+      if (loadedRef.current) return;
+      URL.revokeObjectURL(url);
+      setError("Resim editor icin acilamadi. Orijinal dosya ile devam edebilirsiniz.");
+    };
+    image.src = url;
+
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setStageSize({
+        x: entry.contentRect.width,
+        y: entry.contentRect.height
+      });
+    });
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (imageSize.x && imageSize.y) {
+      const defaults = defaultEditorPoints(stageSize, imageSize);
+      const localDefaults = defaults.map((p) => stageToLocalPoint(p, stageSize, { x: 0, y: 0 }, 0));
+      setPoints(localDefaults);
+    }
+  }, [imageSize, stageSize]); // intentional: initialize points once for new stage/image
+
+  useEffect(() => {
+    function onMove(event: PointerEvent) {
+      const stage = stageRef.current;
+      if (!stage || !dragRef.current) return;
+      const pointer = pointerInElement(event, stage);
+      if (dragRef.current.type === "point") {
+        const index = dragRef.current.index;
+        const local = stageToLocalPoint(pointer, stageSize, pan, rotation);
+        const halfW = displayedImageSize.x / 2;
+        const halfH = displayedImageSize.y / 2;
+        setPoints((current) =>
+          current.map((point, pointIndex) =>
+            pointIndex === index
+              ? {
+                  x: clamp(local.x, -halfW, halfW),
+                  y: clamp(local.y, -halfH, halfH)
+                }
+              : point
+          )
+        );
+        return;
+      }
+      if (dragRef.current.type === "pan") {
+        const dx = pointer.x - dragRef.current.startX;
+        const dy = pointer.y - dragRef.current.startY;
+        setPan({
+          x: dragRef.current.startPanX + dx,
+          y: dragRef.current.startPanY + dy
+        });
+        return;
+      }
+
+      const angle = Math.atan2(pointer.y - center.y, pointer.x - center.x) * (180 / Math.PI);
+      setRotation(dragRef.current.startRotation + angle - dragRef.current.startAngle);
+    }
+
+    function onUp() {
+      dragRef.current = null;
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [center.x, center.y, displayedImageSize.x, displayedImageSize.y, pan, rotation, stageSize, stageSize.x, stageSize.y]);
+
+  function startDrag(index: number, event: ReactPointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    dragRef.current = { type: "point", index };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function startRotate(event: ReactPointerEvent<HTMLButtonElement>) {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const pointer = pointerInElement(event, stage);
+    dragRef.current = {
+      type: "rotate",
+      startAngle: Math.atan2(pointer.y - center.y, pointer.x - center.x) * (180 / Math.PI),
+      startRotation: rotation
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function startPan(event: ReactPointerEvent<HTMLImageElement>) {
+    event.preventDefault();
+    const stage = stageRef.current;
+    if (!stage) return;
+    const pointer = pointerInElement(event, stage);
+    dragRef.current = {
+      type: "pan",
+      startX: pointer.x,
+      startY: pointer.y,
+      startPanX: pan.x,
+      startPanY: pan.y
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  async function confirmCrop() {
+    const image = imageRef.current;
+    if (!image || points.length !== 4) return;
+
+    const imageScaleX = (imageRect.width * zoom) / Math.max(1, image.naturalWidth);
+    const imageScaleY = (imageRect.height * zoom) / Math.max(1, image.naturalHeight);
+    const localToSource = (p: Point): Point => ({
+      x: clamp((p.x + (imageRect.width * zoom) / 2) / Math.max(imageScaleX, 1e-6), 0, image.naturalWidth - 1),
+      y: clamp((p.y + (imageRect.height * zoom) / 2) / Math.max(imageScaleY, 1e-6), 0, image.naturalHeight - 1)
+    });
+    const sourcePoints = points.map(localToSource);
+    const [sTopLeft, sTopRight, sBottomRight, sBottomLeft] = sourcePoints;
+
+    const outputWidth = Math.max(
+      120,
+      Math.round((distance(sTopLeft, sTopRight) + distance(sBottomLeft, sBottomRight)) / 2)
+    );
+    const outputHeight = Math.max(
+      120,
+      Math.round((distance(sTopLeft, sBottomLeft) + distance(sTopRight, sBottomRight)) / 2)
+    );
+    const longestSide = Math.max(outputWidth, outputHeight);
+    const targetScale = longestSide > 3200 ? 3200 / longestSide : 1;
+    const finalWidth = Math.max(120, Math.round(outputWidth * targetScale));
+    const finalHeight = Math.max(120, Math.round(outputHeight * targetScale));
+
+    const sourceCanvas = document.createElement("canvas");
+    sourceCanvas.width = image.naturalWidth;
+    sourceCanvas.height = image.naturalHeight;
+    const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
+    if (!sourceContext) return;
+    sourceContext.imageSmoothingEnabled = true;
+    sourceContext.imageSmoothingQuality = "high";
+    sourceContext.drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight);
+
+    const outputCanvas = document.createElement("canvas");
+    outputCanvas.width = finalWidth;
+    outputCanvas.height = finalHeight;
+    const outputContext = outputCanvas.getContext("2d");
+    if (!outputContext) return;
+
+    const sourceImage = sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+    const result = outputContext.createImageData(outputCanvas.width, outputCanvas.height);
+
+    for (let y = 0; y < outputCanvas.height; y += 1) {
+      const v = outputCanvas.height === 1 ? 0 : y / (outputCanvas.height - 1);
+      for (let x = 0; x < outputCanvas.width; x += 1) {
+        const u = outputCanvas.width === 1 ? 0 : x / (outputCanvas.width - 1);
+        const sourceX =
+          sTopLeft.x * (1 - u) * (1 - v) +
+          sTopRight.x * u * (1 - v) +
+          sBottomRight.x * u * v +
+          sBottomLeft.x * (1 - u) * v;
+        const sourceY =
+          sTopLeft.y * (1 - u) * (1 - v) +
+          sTopRight.y * u * (1 - v) +
+          sBottomRight.y * u * v +
+          sBottomLeft.y * (1 - u) * v;
+        const pixel = samplePixel(sourceImage.data, sourceCanvas.width, sourceCanvas.height, sourceX, sourceY);
+        const target = (y * outputCanvas.width + x) * 4;
+        result.data[target] = pixel[0];
+        result.data[target + 1] = pixel[1];
+        result.data[target + 2] = pixel[2];
+        result.data[target + 3] = pixel[3];
+      }
+    }
+
+    outputContext.putImageData(result, 0, 0);
+    if (brightness !== 100 || contrast !== 100 || isBW) {
+      const filteredCanvas = document.createElement("canvas");
+      filteredCanvas.width = outputCanvas.width;
+      filteredCanvas.height = outputCanvas.height;
+      const filteredCtx = filteredCanvas.getContext("2d");
+      if (filteredCtx) {
+        filteredCtx.filter = `brightness(${brightness}%) contrast(${contrast}%) ${isBW ? "grayscale(100%)" : "grayscale(0%)"}`;
+        filteredCtx.drawImage(outputCanvas, 0, 0);
+        outputContext.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+        outputContext.drawImage(filteredCanvas, 0, 0);
+      }
+    }
+    const blob = await canvasBlob(outputCanvas);
+    if (!blob) {
+      setError("Duzeltilmis resim olusturulamadi.");
+      return;
+    }
+
+    onConfirm(new File([blob], `editor-${file.name.replace(/\.[^.]+$/, "")}.png`, { type: "image/png" }));
+  }
+
+  return (
+    <div className="popup-overlay smart-editor-overlay">
+      <div className="popup-card smart-editor-modal" role="dialog" aria-modal="true" aria-label="Resim duzeltme editoru">
+        <div className="smart-editor-header">
+          <div>
+            <h3>Resmi duzelt</h3>
+            <p>Koseleri belge kenarlarina tasiyin. OK ile duzeltilmis resim isleme alinir.</p>
+          </div>
+          <div className="smart-editor-header-actions">
+            <button type="button" className="btn btn-outline btn-sm" onClick={onCancel}>
+              Iptal
+            </button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => void confirmCrop()}>
+              OK
+            </button>
+          </div>
+        </div>
+
+        <div className="smart-editor-stage" ref={stageRef}>
+          {imageUrl ? (
+            <>
+              <img
+                src={imageUrl}
+                alt="Duzeltilecek yukleme"
+                style={{
+                  left: "50%",
+                  top: "50%",
+                  width: imageRect.width * zoom,
+                  height: imageRect.height * zoom,
+                  transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) rotate(${rotation}deg)`,
+                  filter: `brightness(${brightness}%) contrast(${contrast}%) ${isBW ? "grayscale(100%)" : "grayscale(0%)"}`
+                }}
+                onPointerDown={startPan}
+                draggable={false}
+              />
+              <svg className="smart-editor-overlay-lines" viewBox={`0 0 ${stageSize.x} ${stageSize.y}`} aria-hidden="true">
+                <polygon points={polygon} />
+                {pointsStage.map((point, index) => (
+                  <circle key={index} cx={point.x} cy={point.y} r="8" />
+                ))}
+                <line x1={center.x} y1={center.y} x2={rotateHandle.x} y2={rotateHandle.y} className="smart-editor-rotate-line" />
+              </svg>
+              <button
+                type="button"
+                className="smart-editor-rotate-handle"
+                style={{ left: rotateHandle.x, top: rotateHandle.y }}
+                onPointerDown={startRotate}
+                title="Serbest dondur"
+              />
+              {pointsStage.map((point, index) => (
+                <button
+                  key={index}
+                  type="button"
+                  className="smart-editor-point"
+                  style={{ left: point.x, top: point.y }}
+                  onPointerDown={(event) => startDrag(index, event)}
+                  title={`Kose ${index + 1}`}
+                />
+              ))}
+            </>
+          ) : (
+            <span>Resim yukleniyor...</span>
+          )}
+        </div>
+
+        {error ? <div className="alert alert-error">{error}</div> : null}
+        <div className="smart-editor-tools">
+          <button
+            type="button"
+            className="smart-editor-icon-btn"
+            onClick={() => setZoom((v) => Math.min(3, Number((v + 0.15).toFixed(2))))}
+            title="Zoom +"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+              <path d="M16.5 16.5 21 21M11 8v6M8 11h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="smart-editor-icon-btn"
+            onClick={() => setZoom((v) => Math.max(0.5, Number((v - 0.15).toFixed(2))))}
+            title="Zoom -"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+              <path d="M16.5 16.5 21 21M8 11h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
+          <button type="button" className={`btn btn-outline btn-sm ${isBW ? "active" : ""}`} onClick={() => setIsBW((v) => !v)}>
+            SW
+          </button>
+          <div className="smart-editor-slider">
+            <label htmlFor="editorBrightness">Parlaklik</label>
+            <input
+              id="editorBrightness"
+              type="range"
+              min={70}
+              max={140}
+              value={brightness}
+              onChange={(event) => setBrightness(Number(event.target.value))}
+            />
+          </div>
+          <div className="smart-editor-slider">
+            <label htmlFor="editorContrast">Kontrast</label>
+            <input
+              id="editorContrast"
+              type="range"
+              min={70}
+              max={150}
+              value={contrast}
+              onChange={(event) => setContrast(Number(event.target.value))}
+            />
+          </div>
+          <button
+            type="button"
+            className="btn btn-outline btn-sm"
+            onClick={() => {
+              setRotation(0);
+              setZoom(1);
+              setPan({ x: 0, y: 0 });
+              setBrightness(100);
+              setContrast(100);
+              setIsBW(false);
+              const defaults = defaultEditorPoints(stageSize, imageSize);
+              setPoints(defaults.map((p) => stageToLocalPoint(p, stageSize, { x: 0, y: 0 }, 0)));
+            }}
+          >
+            Sifirla
+          </button>
+        </div>
+        <div className="smart-editor-actions">
+          {error ? (
+            <button type="button" className="btn btn-outline" onClick={() => onConfirm(file)}>
+              Orijinali kullan
+            </button>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }

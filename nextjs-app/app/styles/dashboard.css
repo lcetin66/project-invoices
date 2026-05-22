@@ -131,3 +131,198 @@
   background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, .2);
 }
+
+.smart-editor-overlay {
+  z-index: 350;
+}
+
+.smart-editor-modal {
+  width: min(96vw, 980px);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.smart-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.smart-editor-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.smart-editor-header h3 {
+  margin: 0 0 4px;
+  font-size: 1.1rem;
+}
+
+.smart-editor-header p {
+  margin: 0;
+  color: var(--text-light);
+  font-size: .9rem;
+}
+
+.smart-editor-stage {
+  position: relative;
+  height: min(62vh, 620px);
+  min-height: 380px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background:
+    linear-gradient(45deg, #e5e7eb 25%, transparent 25%),
+    linear-gradient(-45deg, #e5e7eb 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e5e7eb 75%),
+    linear-gradient(-45deg, transparent 75%, #e5e7eb 75%);
+  background-color: #f8fafc;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  background-size: 20px 20px;
+  touch-action: none;
+}
+
+.smart-editor-stage > img {
+  position: absolute;
+  object-fit: contain;
+  user-select: none;
+  filter: drop-shadow(0 16px 32px rgba(15, 23, 42, .18));
+}
+
+.smart-editor-overlay-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.smart-editor-overlay-lines polygon {
+  fill: rgba(99, 102, 241, .08);
+  stroke: #16a34a;
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+
+.smart-editor-overlay-lines circle {
+  fill: #fff;
+  stroke: #16a34a;
+  stroke-width: 3;
+}
+
+.smart-editor-rotate-line {
+  stroke: #16a34a;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.smart-editor-point {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  border: 0;
+  border-radius: 999px;
+  background: rgba(22, 163, 74, .2);
+  cursor: grab;
+  touch-action: none;
+}
+
+.smart-editor-point::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: 999px;
+  background: #fff;
+  border: 3px solid #16a34a;
+}
+
+.smart-editor-point:active {
+  cursor: grabbing;
+}
+
+.smart-editor-rotate-handle {
+  position: absolute;
+  width: 52px;
+  height: 52px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  border: 3px solid #16a34a;
+  background: rgba(22, 163, 74, .18);
+  cursor: grab;
+  touch-action: none;
+}
+
+.smart-editor-rotate-handle:active {
+  cursor: grabbing;
+}
+
+.smart-editor-tools {
+  display: grid;
+  grid-template-columns: auto auto auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.smart-editor-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  grid-column: 1 / -1;
+}
+
+.smart-editor-slider label {
+  font-size: .82rem;
+  color: var(--text-light);
+}
+
+.smart-editor-slider input[type="range"] {
+  width: 100%;
+}
+
+.smart-editor-icon-btn {
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.smart-editor-icon-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.smart-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@media (max-width: 700px) {
+  .smart-editor-header {
+    flex-direction: column;
+  }
+
+  .smart-editor-stage {
+    min-height: 320px;
+  }
+
+  .smart-editor-tools {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: stretch;
+  }
+
+  .smart-editor-header-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

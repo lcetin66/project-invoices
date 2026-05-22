@@ -2,6 +2,7 @@
 @import "./styles/dashboard.css";
 @import "./styles/admin.css";
 @import "./styles/invoices.css";
+@import "./styles/image-editor.css";
 
 /* ===== CSS Variablen ===== */
 :root {
