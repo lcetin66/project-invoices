@@ -448,9 +448,10 @@
 
 .pie-slider-content {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  grid-template-columns: 1fr;
   gap: 16px;
   align-items: center;
+  min-height: 220px;
 }
 
 .pie-slider-chart {
@@ -484,6 +485,145 @@
 .pie-legend-value {
   color: #0f172a;
   font-size: 0.84rem;
+}
+
+.analytics-cashflow-bars {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+  height: 220px;
+}
+
+.dual-bar-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.dual-bars {
+  height: 180px;
+  display: flex;
+  align-items: end;
+  gap: 6px;
+}
+
+.dual-bars span {
+  width: 14px;
+  border-radius: 6px 6px 0 0;
+}
+
+.bar-in { background: #2563eb; }
+.bar-out { background: #ef4444; }
+
+.stacked-bars {
+  display: grid;
+  gap: 10px;
+}
+
+.stacked-row {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.stacked-track {
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  display: flex;
+  background: #e5e7eb;
+}
+
+.stacked-track span { height: 100%; }
+
+.pareto-chart {
+  display: grid;
+  gap: 10px;
+}
+
+.pareto-row {
+  display: grid;
+  grid-template-columns: 170px 1fr 46px;
+  align-items: center;
+  gap: 10px;
+}
+
+.pareto-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  overflow: hidden;
+}
+
+.pareto-bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #111827, #2563eb);
+}
+
+.triple-status {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.status-card {
+  border: 2px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.status-card strong {
+  font-size: 1.4rem;
+  color: #0f172a;
+}
+
+.quality-line {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 8px;
+  align-items: end;
+  height: 180px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.q-point-wrap {
+  position: relative;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.q-point {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #111827;
+  left: calc(50% - 5px);
+}
+
+.q-point-wrap small {
+  align-self: end;
+  margin-bottom: -22px;
+  color: #64748b;
+}
+
+.heatmap-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(7, 24px);
+  gap: 6px;
+}
+
+.heatmap-grid span {
+  border-radius: 6px;
 }
 
 /* Dark KPI Strip Accent Banner */
@@ -789,6 +929,19 @@
 
   .pie-slider-content {
     grid-template-columns: 1fr;
+  }
+
+  .analytics-cashflow-bars {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .triple-status {
+    grid-template-columns: 1fr;
+  }
+
+  .pareto-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 }
 

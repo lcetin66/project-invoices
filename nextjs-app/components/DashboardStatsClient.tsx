@@ -34,7 +34,7 @@ export function DashboardStatsClient() {
   const [activeTab, setActiveTab] = useState<"purchases" | "sales" | "all">("purchases");
   const [timeframe, setTimeframe] = useState<"7days" | "30days" | "all">("30days");
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; value: string } | null>(null);
-  const [activePieSlide, setActivePieSlide] = useState(0);
+  const [activeChartSlide, setActiveChartSlide] = useState(0);
 
   useEffect(() => {
     async function loadData() {
@@ -170,170 +170,131 @@ export function DashboardStatsClient() {
     }));
   }, [categoryShare]);
 
-  const pieSlides = useMemo(() => {
-    const palette = ["#2563eb", "#ef4444", "#111827", "#10b981", "#f59e0b", "#8b5cf6", "#06b6d4", "#64748b"];
-
-    const incoming = Number(stats?.totals.eingang_summe ?? 0);
-    const outgoing = Number(stats?.totals.ausgang_summe ?? 0);
-
+  const analytics = useMemo(() => {
+    const monthKeys = Array.from({ length: 6 }, (_, idx) => {
+      const d = new Date();
+      d.setDate(1);
+      d.setMonth(d.getMonth() - (5 - idx));
+      return {
+        key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+        label: d.toLocaleDateString("de-DE", { month: "short" })
+      };
+    });
+    const monthMap = new Map(monthKeys.map((m) => [m.key, { incoming: 0, outgoing: 0, categories: new Map<string, number>() }]));
     const supplierTotals = new Map<string, number>();
-    const monthlyCategory = new Map<string, number>();
-    const taxByRate = new Map<string, number>();
-    const weekdayTotals = [0, 0, 0, 0, 0, 0, 0];
+    const vatTotals = new Map<string, number>();
+    const weekQuality = Array.from({ length: 8 }, (_, i) => ({ label: `W-${8 - i}`, sum: 0, count: 0 }));
+    const recurringBySupplier = new Map<string, { total: number; count: number }>();
+    const heatmap = Array.from({ length: 7 }, () => Array.from({ length: 4 }, () => 0));
     let overdue = 0;
-    let next7Days = 0;
-    let noDue = 0;
-    let qualityHigh = 0;
-    let qualityMid = 0;
-    let qualityLow = 0;
-    let qualityMissing = 0;
+    let next7 = 0;
+    let onTime = 0;
 
     const now = new Date();
-    const thisMonth = now.getMonth();
-    const thisYear = now.getFullYear();
     const nextWeek = new Date(now);
-    nextWeek.setDate(now.getDate() + 7);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    const topCats = new Map<string, number>();
 
     for (const inv of invoices) {
       const amount = Number(inv.brutto_betrag ?? 0);
-      const supplier = inv.lieferant || "Unbekannt";
+      const date = new Date(String(inv.rechnungsdatum || inv.hochladezeit || ""));
+      if (!Number.isNaN(date.getTime())) {
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+        const monthEntry = monthMap.get(monthKey);
+        if (monthEntry) {
+          if (inv.rechnung_typ === "eingang") monthEntry.incoming += amount;
+          if (inv.rechnung_typ === "ausgang") monthEntry.outgoing += amount;
+          const cat = inv.kategorie_name || t.dashboard.uncategorized;
+          monthEntry.categories.set(cat, (monthEntry.categories.get(cat) ?? 0) + amount);
+        }
+        const weekBucket = Math.min(3, Math.max(0, Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24 * 7))));
+        const weekday = (date.getDay() + 6) % 7;
+        heatmap[weekday][3 - weekBucket] += amount;
+      }
+
+      const supplier = inv.lieferant || t.dashboard.unknown;
       supplierTotals.set(supplier, (supplierTotals.get(supplier) ?? 0) + amount);
-
-      const score = Number(inv.qualitaet_score ?? 0);
-      if (!Number.isFinite(score) || score <= 0) qualityMissing += 1;
-      else if (score >= 80) qualityHigh += 1;
-      else if (score >= 50) qualityMid += 1;
-      else qualityLow += 1;
-
-      const dueText = String(inv.faelligkeitsdatum ?? "").trim();
-      if (dueText) {
-        const due = new Date(dueText);
-        if (!Number.isNaN(due.getTime())) {
-          if (due < now) overdue += 1;
-          else if (due <= nextWeek) next7Days += 1;
-        } else {
-          noDue += 1;
-        }
-      } else {
-        noDue += 1;
-      }
-
-      const rawDate = String(inv.rechnungsdatum || inv.hochladezeit || "");
-      const d = new Date(rawDate);
-      if (!Number.isNaN(d.getTime())) {
-        const day = (d.getDay() + 6) % 7;
-        weekdayTotals[day] += amount;
-        if (d.getMonth() === thisMonth && d.getFullYear() === thisYear) {
-          const cat = inv.kategorie_name || "Sonstige";
-          monthlyCategory.set(cat, (monthlyCategory.get(cat) ?? 0) + amount);
-        }
-      }
+      const rec = recurringBySupplier.get(supplier) ?? { total: 0, count: 0 };
+      rec.total += amount;
+      rec.count += 1;
+      recurringBySupplier.set(supplier, rec);
 
       const vatAmount = Number(String(inv.mwst_betrag ?? "0").replace(",", "."));
-      const vatRate = String(inv.mwst_satz ?? "").trim() || "Unbekannt";
-      if (Number.isFinite(vatAmount) && vatAmount >= 0) {
-        taxByRate.set(vatRate, (taxByRate.get(vatRate) ?? 0) + vatAmount);
+      const vatRate = (String(inv.mwst_satz ?? "").replace("%", "").trim() || "0") + "%";
+      if (Number.isFinite(vatAmount)) vatTotals.set(vatRate, (vatTotals.get(vatRate) ?? 0) + vatAmount);
+
+      const due = new Date(String(inv.faelligkeitsdatum ?? ""));
+      if (!Number.isNaN(due.getTime())) {
+        if (due < now) overdue += 1;
+        else if (due <= nextWeek) next7 += 1;
+        else onTime += 1;
+      } else {
+        onTime += 1;
+      }
+
+      const q = Number(inv.qualitaet_score ?? 0);
+      if (Number.isFinite(q) && q > 0) {
+        const weekIndex = Math.min(7, Math.max(0, Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24 * 7))));
+        const bucket = weekQuality[7 - weekIndex];
+        if (bucket) {
+          bucket.sum += q;
+          bucket.count += 1;
+        }
       }
     }
 
-    const supplierEntries = Array.from(supplierTotals.entries()).sort((a, b) => b[1] - a[1]);
-    const topSuppliers = supplierEntries.slice(0, 5);
-    const restSuppliers = supplierEntries.slice(5).reduce((sum, [, v]) => sum + v, 0);
-    const topSupplierData = topSuppliers.map(([label, value], i) => ({ label, value, color: palette[i % palette.length] }));
-    if (restSuppliers > 0) topSupplierData.push({ label: "Andere", value: restSuppliers, color: "#94a3b8" });
+    for (const m of monthMap.values()) {
+      for (const [k, v] of m.categories.entries()) topCats.set(k, (topCats.get(k) ?? 0) + v);
+    }
+    const topCategoryNames = Array.from(topCats.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
 
-    const monthCatEntries = Array.from(monthlyCategory.entries()).sort((a, b) => b[1] - a[1]);
-    const monthTopCats = monthCatEntries.slice(0, 4);
-    const monthOther = monthCatEntries.slice(4).reduce((sum, [, v]) => sum + v, 0);
-    const monthCatData = monthTopCats.map(([label, value], i) => ({ label, value, color: palette[i % palette.length] }));
-    if (monthOther > 0) monthCatData.push({ label: "Andere", value: monthOther, color: "#a3a3a3" });
+    const monthlyCashflow = monthKeys.map((m) => ({ label: m.label, ...monthMap.get(m.key)! }));
+    const categoryTrend = monthlyCashflow.map((m) => {
+      const total = topCategoryNames.reduce((sum, name) => sum + (m.categories.get(name) ?? 0), 0) || 1;
+      return {
+        label: m.label,
+        segments: topCategoryNames.map((name, idx) => ({
+          name,
+          pct: ((m.categories.get(name) ?? 0) / total) * 100,
+          color: ["#2563eb", "#ef4444", "#111827"][idx]
+        }))
+      };
+    });
 
-    const vatData = Array.from(taxByRate.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([rate, value], i) => ({
-        label: `MwSt ${rate}%`,
-        value,
-        color: palette[i % palette.length]
-      }));
+    const supplierSorted = Array.from(supplierTotals.entries()).sort((a, b) => b[1] - a[1]);
+    const supplierTotalSum = supplierSorted.reduce((s, [, v]) => s + v, 0) || 1;
+    let cumulative = 0;
+    const pareto = supplierSorted.slice(0, 5).map(([name, value]) => {
+      cumulative += (value / supplierTotalSum) * 100;
+      return { name, value, cumulative };
+    });
 
-    const recurringBySupplier = Array.from(
-      invoices.reduce((map, inv) => {
-        const key = inv.lieferant || "Unbekannt";
-        const prev = map.get(key) ?? { count: 0, total: 0 };
-        prev.count += 1;
-        prev.total += Number(inv.brutto_betrag ?? 0);
-        map.set(key, prev);
-        return map;
-      }, new Map<string, { count: number; total: number }>())
-    );
-    const recurring = recurringBySupplier.filter(([, v]) => v.count > 1).reduce((sum, [, v]) => sum + v.total, 0);
-    const oneOff = recurringBySupplier.filter(([, v]) => v.count <= 1).reduce((sum, [, v]) => sum + v.total, 0);
+    const recurringTotal = Array.from(recurringBySupplier.values()).filter((x) => x.count > 1).reduce((s, x) => s + x.total, 0);
+    const oneOffTotal = Array.from(recurringBySupplier.values()).filter((x) => x.count <= 1).reduce((s, x) => s + x.total, 0);
 
-    const weekdayLabels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
-    const weekdayData = weekdayTotals.map((value, i) => ({
-      label: weekdayLabels[i],
-      value,
-      color: palette[i % palette.length]
+    const qualityLine = weekQuality.map((w) => ({
+      label: w.label,
+      value: w.count > 0 ? w.sum / w.count : 0
     }));
 
-    return [
-      {
-        title: "Monatlicher Cashflow",
-        subtitle: "Einnahmen vs. Ausgaben",
-        data: [
-          { label: "Eingänge", value: incoming, color: "#2563eb" },
-          { label: "Ausgänge", value: outgoing, color: "#ef4444" }
-        ]
-      },
-      {
-        title: "Kategorie-Trend (aktueller Monat)",
-        subtitle: "Top-Kategorien nach Betrag",
-        data: monthCatData.length > 0 ? monthCatData : [{ label: "Keine Daten", value: 1, color: "#cbd5e1" }]
-      },
-      {
-        title: "Tedarikçi Konsantrasyonu",
-        subtitle: "Top 5 + Andere",
-        data: topSupplierData.length > 0 ? topSupplierData : [{ label: "Keine Daten", value: 1, color: "#cbd5e1" }]
-      },
-      {
-        title: "MwSt Verteilung",
-        subtitle: "Steuerbetrag nach Steuersatz",
-        data: vatData.length > 0 ? vatData : [{ label: "Keine Daten", value: 1, color: "#cbd5e1" }]
-      },
-      {
-        title: "Fälligkeit Status",
-        subtitle: "Überfällig / 7 Tage / Offen",
-        data: [
-          { label: "Überfällig", value: overdue, color: "#ef4444" },
-          { label: "Nächste 7 Tage", value: next7Days, color: "#f59e0b" },
-          { label: "Ohne Fälligkeitsdatum", value: noDue, color: "#64748b" }
-        ]
-      },
-      {
-        title: "Belge Kalite Dağılımı",
-        subtitle: "OCR/AI Qualität",
-        data: [
-          { label: "Yüksek", value: qualityHigh, color: "#10b981" },
-          { label: "Orta", value: qualityMid, color: "#2563eb" },
-          { label: "Düşük", value: qualityLow, color: "#ef4444" },
-          { label: "Yok", value: qualityMissing, color: "#6b7280" }
-        ]
-      },
-      {
-        title: "Düzenli vs Tek Sefer",
-        subtitle: "Lieferant bazlı tekrar",
-        data: [
-          { label: "Düzenli", value: recurring, color: "#111827" },
-          { label: "Tek Sefer", value: oneOff, color: "#2563eb" }
-        ]
-      },
-      {
-        title: "Haftalık Harcama",
-        subtitle: "Haftanın günlerine göre",
-        data: weekdayData.some((d) => d.value > 0) ? weekdayData : [{ label: "Keine Daten", value: 1, color: "#cbd5e1" }]
-      }
-    ];
-  }, [invoices, stats]);
+    return {
+      monthlyCashflow,
+      categoryTrend,
+      pareto,
+      taxDonut: Array.from(vatTotals.entries()).map(([rate, value], idx) => ({ label: `MwSt ${rate}`, value, color: ["#2563eb", "#ef4444", "#111827", "#64748b"][idx % 4] })),
+      dueStatus: [
+        { label: "Überfällig", value: overdue, color: "#ef4444" },
+        { label: "7 Tage", value: next7, color: "#f59e0b" },
+        { label: "Pünktlich", value: onTime, color: "#10b981" }
+      ],
+      qualityLine,
+      recurringDonut: [
+        { label: "Düzenli", value: recurringTotal, color: "#111827" },
+        { label: "Tek Sefer", value: oneOffTotal, color: "#2563eb" }
+      ],
+      heatmap
+    };
+  }, [invoices]);
 
   // Supplier data for table
   const supplierData = useMemo(() => {
@@ -436,23 +397,33 @@ export function DashboardStatsClient() {
         <div className="pie-slider-block">
           <div className="pie-slider-head">
             <div>
-              <h4>{pieSlides[activePieSlide]?.title}</h4>
-              <p>{pieSlides[activePieSlide]?.subtitle}</p>
+              <h4>{
+                [
+                  "Aylık Cashflow",
+                  "Kategori Dağılım Trendi",
+                  "Tedarikçi Konsantrasyonu",
+                  "Vergi (MwSt) Özeti",
+                  "Vade / Gecikme Durumu",
+                  "Belge Kalite & AI Güven",
+                  "Düzenli vs Tek Sefer",
+                  "Haftanın Günü Isı Haritası"
+                ][activeChartSlide]
+              }</h4>
             </div>
             <div className="pie-slider-controls">
               <button
                 type="button"
-                onClick={() => setActivePieSlide((prev) => (prev === 0 ? pieSlides.length - 1 : prev - 1))}
+                onClick={() => setActiveChartSlide((prev) => (prev === 0 ? 7 : prev - 1))}
                 aria-label="Vorherige Statistik"
               >
                 ←
               </button>
               <span>
-                {activePieSlide + 1}/{pieSlides.length}
+                {activeChartSlide + 1}/8
               </span>
               <button
                 type="button"
-                onClick={() => setActivePieSlide((prev) => (prev === pieSlides.length - 1 ? 0 : prev + 1))}
+                onClick={() => setActiveChartSlide((prev) => (prev === 7 ? 0 : prev + 1))}
                 aria-label="Nächste Statistik"
               >
                 →
@@ -460,20 +431,80 @@ export function DashboardStatsClient() {
             </div>
           </div>
           <div className="pie-slider-content">
-            <div className="pie-slider-chart">
-              <PieChart data={pieSlides[activePieSlide]?.data ?? []} radius={92} innerRadius={54} />
-            </div>
-            <div className="pie-slider-legend">
-              {(pieSlides[activePieSlide]?.data ?? []).map((item) => (
-                <div key={`${pieSlides[activePieSlide]?.title}-${item.label}`} className="pie-legend-row">
-                  <span className="pie-legend-dot" style={{ background: item.color }} />
-                  <span className="pie-legend-label">{item.label}</span>
-                  <strong className="pie-legend-value">
-                    {item.value.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}
-                  </strong>
-                </div>
-              ))}
-            </div>
+            {activeChartSlide === 0 && (
+              <div className="analytics-cashflow-bars">
+                {analytics.monthlyCashflow.map((m) => {
+                  const max = Math.max(1, ...analytics.monthlyCashflow.map((x) => Math.max(x.incoming, x.outgoing)));
+                  return (
+                    <div key={m.label} className="dual-bar-col">
+                      <div className="dual-bars">
+                        <span style={{ height: `${(m.incoming / max) * 100}%` }} className="bar-in" />
+                        <span style={{ height: `${(m.outgoing / max) * 100}%` }} className="bar-out" />
+                      </div>
+                      <small>{m.label}</small>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {activeChartSlide === 1 && (
+              <div className="stacked-bars">
+                {analytics.categoryTrend.map((m) => (
+                  <div key={m.label} className="stacked-row">
+                    <small>{m.label}</small>
+                    <div className="stacked-track">
+                      {m.segments.map((s) => (
+                        <span key={s.name} style={{ width: `${s.pct}%`, background: s.color }} title={`${s.name} ${s.pct.toFixed(0)}%`} />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {activeChartSlide === 2 && (
+              <div className="pareto-chart">
+                {analytics.pareto.map((p) => (
+                  <div key={p.name} className="pareto-row">
+                    <small>{p.name}</small>
+                    <div className="pareto-bar"><span style={{ width: `${p.cumulative}%` }} /></div>
+                    <strong>{p.cumulative.toFixed(0)}%</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+            {activeChartSlide === 3 && <PieChart data={analytics.taxDonut} radius={100} innerRadius={56} />}
+            {activeChartSlide === 4 && (
+              <div className="triple-status">
+                {analytics.dueStatus.map((d) => (
+                  <div key={d.label} className="status-card" style={{ borderColor: d.color }}>
+                    <span>{d.label}</span>
+                    <strong>{d.value}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+            {activeChartSlide === 5 && (
+              <div className="quality-line">
+                {analytics.qualityLine.map((q) => (
+                  <div key={q.label} className="q-point-wrap">
+                    <span className="q-point" style={{ bottom: `${q.value}%` }} />
+                    <small>{q.label}</small>
+                  </div>
+                ))}
+              </div>
+            )}
+            {activeChartSlide === 6 && <PieChart data={analytics.recurringDonut} radius={100} innerRadius={56} />}
+            {activeChartSlide === 7 && (
+              <div className="heatmap-grid">
+                {analytics.heatmap.flatMap((row, ri) =>
+                  row.map((v, ci) => {
+                    const max = Math.max(1, ...analytics.heatmap.flat());
+                    const alpha = v / max;
+                    return <span key={`${ri}-${ci}`} style={{ background: `rgba(37,99,235,${Math.max(0.12, alpha)})` }} title={`${v.toFixed(2)} EUR`} />;
+                  })
+                )}
+              </div>
+            )}
           </div>
         </div>
 
