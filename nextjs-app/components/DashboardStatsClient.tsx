@@ -34,7 +34,7 @@ export function DashboardStatsClient() {
   const [activeTab, setActiveTab] = useState<"purchases" | "sales" | "all">("purchases");
   const [timeframe, setTimeframe] = useState<"7days" | "30days" | "all">("30days");
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; value: string } | null>(null);
-  const [activeChartSlide, setActiveChartSlide] = useState(0);
+  const [activeBottomSlide, setActiveBottomSlide] = useState(0);
 
   useEffect(() => {
     async function loadData() {
@@ -131,6 +131,11 @@ export function DashboardStatsClient() {
     const scores = invoices.map((i) => Number(i.qualitaet_score ?? 0)).filter((s) => s > 0);
     return scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
   }, [invoices]);
+
+  const qualityPercent = useMemo(() => {
+    const raw = averageQualityScore > 10 ? averageQualityScore : averageQualityScore * 10;
+    return Math.max(0, Math.min(100, raw));
+  }, [averageQualityScore]);
 
   // Categorization rate (% of invoices with a category)
   const categorizationRate = useMemo(() => {
@@ -394,120 +399,6 @@ export function DashboardStatsClient() {
           )}
         </div>
 
-        <div className="pie-slider-block">
-          <div className="pie-slider-head">
-            <div>
-              <h4>{
-                [
-                  "Aylık Cashflow",
-                  "Kategori Dağılım Trendi",
-                  "Tedarikçi Konsantrasyonu",
-                  "Vergi (MwSt) Özeti",
-                  "Vade / Gecikme Durumu",
-                  "Belge Kalite & AI Güven",
-                  "Düzenli vs Tek Sefer",
-                  "Haftanın Günü Isı Haritası"
-                ][activeChartSlide]
-              }</h4>
-            </div>
-            <div className="pie-slider-controls">
-              <button
-                type="button"
-                onClick={() => setActiveChartSlide((prev) => (prev === 0 ? 7 : prev - 1))}
-                aria-label="Vorherige Statistik"
-              >
-                ←
-              </button>
-              <span>
-                {activeChartSlide + 1}/8
-              </span>
-              <button
-                type="button"
-                onClick={() => setActiveChartSlide((prev) => (prev === 7 ? 0 : prev + 1))}
-                aria-label="Nächste Statistik"
-              >
-                →
-              </button>
-            </div>
-          </div>
-          <div className="pie-slider-content">
-            {activeChartSlide === 0 && (
-              <div className="analytics-cashflow-bars">
-                {analytics.monthlyCashflow.map((m) => {
-                  const max = Math.max(1, ...analytics.monthlyCashflow.map((x) => Math.max(x.incoming, x.outgoing)));
-                  return (
-                    <div key={m.label} className="dual-bar-col">
-                      <div className="dual-bars">
-                        <span style={{ height: `${(m.incoming / max) * 100}%` }} className="bar-in" />
-                        <span style={{ height: `${(m.outgoing / max) * 100}%` }} className="bar-out" />
-                      </div>
-                      <small>{m.label}</small>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {activeChartSlide === 1 && (
-              <div className="stacked-bars">
-                {analytics.categoryTrend.map((m) => (
-                  <div key={m.label} className="stacked-row">
-                    <small>{m.label}</small>
-                    <div className="stacked-track">
-                      {m.segments.map((s) => (
-                        <span key={s.name} style={{ width: `${s.pct}%`, background: s.color }} title={`${s.name} ${s.pct.toFixed(0)}%`} />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {activeChartSlide === 2 && (
-              <div className="pareto-chart">
-                {analytics.pareto.map((p) => (
-                  <div key={p.name} className="pareto-row">
-                    <small>{p.name}</small>
-                    <div className="pareto-bar"><span style={{ width: `${p.cumulative}%` }} /></div>
-                    <strong>{p.cumulative.toFixed(0)}%</strong>
-                  </div>
-                ))}
-              </div>
-            )}
-            {activeChartSlide === 3 && <PieChart data={analytics.taxDonut} radius={100} innerRadius={56} />}
-            {activeChartSlide === 4 && (
-              <div className="triple-status">
-                {analytics.dueStatus.map((d) => (
-                  <div key={d.label} className="status-card" style={{ borderColor: d.color }}>
-                    <span>{d.label}</span>
-                    <strong>{d.value}</strong>
-                  </div>
-                ))}
-              </div>
-            )}
-            {activeChartSlide === 5 && (
-              <div className="quality-line">
-                {analytics.qualityLine.map((q) => (
-                  <div key={q.label} className="q-point-wrap">
-                    <span className="q-point" style={{ bottom: `${q.value}%` }} />
-                    <small>{q.label}</small>
-                  </div>
-                ))}
-              </div>
-            )}
-            {activeChartSlide === 6 && <PieChart data={analytics.recurringDonut} radius={100} innerRadius={56} />}
-            {activeChartSlide === 7 && (
-              <div className="heatmap-grid">
-                {analytics.heatmap.flatMap((row, ri) =>
-                  row.map((v, ci) => {
-                    const max = Math.max(1, ...analytics.heatmap.flat());
-                    const alpha = v / max;
-                    return <span key={`${ri}-${ci}`} style={{ background: `rgba(37,99,235,${Math.max(0.12, alpha)})` }} title={`${v.toFixed(2)} EUR`} />;
-                  })
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
         <div className="chart-period-selectors">
           <button className={`period-btn ${timeframe === "7days" ? "active" : ""}`} onClick={() => setTimeframe("7days")}>
             {t.dashboard.last7Days}
@@ -539,10 +430,10 @@ export function DashboardStatsClient() {
                 stroke="#38bdf8"
                 strokeWidth="4.5"
                 strokeDasharray="175.9"
-                strokeDashoffset={175.9 - (175.9 * averageQualityScore) / 10}
+                strokeDashoffset={175.9 - (175.9 * qualityPercent) / 100}
               />
             </svg>
-            <span className="gauge-center-label">{Math.round(averageQualityScore * 10)}%</span>
+            <span className="gauge-center-label">{Math.round(qualityPercent)}%</span>
           </div>
         </article>
 
@@ -672,6 +563,122 @@ export function DashboardStatsClient() {
               <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "#1e293b" }}>
                 {(stats?.totals.avg_betrag ?? 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} EUR
               </div>
+            </div>
+          </div>
+
+          {/* ─── 8-Slide Analytics Carousel ─── */}
+          <div className="pie-slider-block" style={{ marginTop: "16px" }}>
+            <div className="pie-slider-head">
+              <div>
+                <h4 style={{ fontSize: "0.85rem", fontWeight: 700, color: "#1e293b" }}>
+                  {[
+                    "Aylık Cashflow",
+                    "Kategori Dağılım Trendi",
+                    "Tedarikçi Konsantrasyonu",
+                    "Vergi (MwSt) Özeti",
+                    "Vade / Gecikme Durumu",
+                    "Belge Kalite & AI Güven",
+                    "Düzenli vs Tek Sefer",
+                    "Haftanın Günü Isı Haritası"
+                  ][activeBottomSlide]}
+                </h4>
+              </div>
+              <div className="pie-slider-controls">
+                <button
+                  type="button"
+                  onClick={() => setActiveBottomSlide((prev) => (prev === 0 ? 7 : prev - 1))}
+                  aria-label="Önceki"
+                >←</button>
+                <span>{activeBottomSlide + 1}/8</span>
+                <button
+                  type="button"
+                  onClick={() => setActiveBottomSlide((prev) => (prev === 7 ? 0 : prev + 1))}
+                  aria-label="Sonraki"
+                >→</button>
+              </div>
+            </div>
+
+            <div className="pie-slider-content">
+              {activeBottomSlide === 0 && (
+                <div className="analytics-cashflow-bars">
+                  {analytics.monthlyCashflow.map((m) => {
+                    const max = Math.max(1, ...analytics.monthlyCashflow.map((x) => Math.max(x.incoming, x.outgoing)));
+                    return (
+                      <div key={m.label} className="dual-bar-col">
+                        <div className="dual-bars">
+                          <span style={{ height: `${(m.incoming / max) * 100}%` }} className="bar-in" />
+                          <span style={{ height: `${(m.outgoing / max) * 100}%` }} className="bar-out" />
+                        </div>
+                        <small>{m.label}</small>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {activeBottomSlide === 1 && (
+                <div className="stacked-bars">
+                  {analytics.categoryTrend.map((m) => (
+                    <div key={m.label} className="stacked-row">
+                      <small>{m.label}</small>
+                      <div className="stacked-track">
+                        {m.segments.map((s) => (
+                          <span key={s.name} style={{ width: `${s.pct}%`, background: s.color }} title={`${s.name} ${s.pct.toFixed(0)}%`} />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {activeBottomSlide === 2 && (
+                <div className="pareto-chart">
+                  {analytics.pareto.map((p) => (
+                    <div key={p.name} className="pareto-row">
+                      <small>{p.name}</small>
+                      <div className="pareto-bar"><span style={{ width: `${p.cumulative}%` }} /></div>
+                      <strong>{p.cumulative.toFixed(0)}%</strong>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {activeBottomSlide === 3 && <PieChart data={analytics.taxDonut} radius={100} innerRadius={56} />}
+              {activeBottomSlide === 4 && (
+                <div className="triple-status">
+                  {analytics.dueStatus.map((d) => (
+                    <div key={d.label} className="status-card" style={{ borderColor: d.color }}>
+                      <span>{d.label}</span>
+                      <strong>{d.value}</strong>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {activeBottomSlide === 5 && (
+                <div className="quality-line">
+                  {analytics.qualityLine.map((q) => (
+                    <div key={q.label} className="q-point-wrap">
+                      <span className="q-point" style={{ bottom: `${q.value}%` }} />
+                      <small>{q.label}</small>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {activeBottomSlide === 6 && <PieChart data={analytics.recurringDonut} radius={100} innerRadius={56} />}
+              {activeBottomSlide === 7 && (
+                <div className="heatmap-grid">
+                  {analytics.heatmap.flatMap((row, ri) =>
+                    row.map((v, ci) => {
+                      const max = Math.max(1, ...analytics.heatmap.flat());
+                      const alpha = v / max;
+                      return (
+                        <span
+                          key={`b-${ri}-${ci}`}
+                          style={{ background: `rgba(37,99,235,${Math.max(0.12, alpha)})` }}
+                          title={`${v.toFixed(2)} EUR`}
+                        />
+                      );
+                    })
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </article>

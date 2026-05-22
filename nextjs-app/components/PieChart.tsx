@@ -1,5 +1,6 @@
-// PieChart.tsx - Reusable SVG pie chart component
-import React from "react";
+"use client";
+// PieChart.tsx — 3D perspective pie chart using SVG ellipse + depth walls
+import React, { useState } from "react";
 
 interface PieSlice {
   label: string;
@@ -9,48 +10,200 @@ interface PieSlice {
 
 interface PieChartProps {
   data: PieSlice[];
-  radius?: number; // radius in pixels
-  innerRadius?: number; // for donut style
+  radius?: number;
+  innerRadius?: number; // kept for API compat, unused in 3D mode
 }
 
-/**
- * Simple SVG pie (or donut) chart.
- * Expects data array sorted descending for visual priority.
- */
-export const PieChart: React.FC<PieChartProps> = ({ data, radius = 80, innerRadius = 0 }) => {
-  const total = data.reduce((sum, d) => sum + d.value, 0);
-  const viewBoxSize = radius * 2;
-  let cumulative = 0;
+/** Convert polar angle to cartesian on a tilted ellipse */
+function toXY(cx: number, cy: number, rx: number, ry: number, angleDeg: number) {
+  const rad = ((angleDeg - 90) * Math.PI) / 180;
+  return { x: cx + rx * Math.cos(rad), y: cy + ry * Math.sin(rad) };
+}
 
-  const slices = data.map((slice, idx) => {
-    const startAngle = (cumulative / total) * 360;
-    const sliceAngle = (slice.value / total) * 360;
-    cumulative += slice.value;
-    const endAngle = (cumulative / total) * 360;
+/** Darken a hex color by `factor` (0–1) */
+function darken(color: string, factor = 0.38): string {
+  const hex = color.replace("#", "");
+  if (hex.length !== 6) return color;
+  const r = Math.round(parseInt(hex.slice(0, 2), 16) * (1 - factor));
+  const g = Math.round(parseInt(hex.slice(2, 4), 16) * (1 - factor));
+  const b = Math.round(parseInt(hex.slice(4, 6), 16) * (1 - factor));
+  return `rgb(${r},${g},${b})`;
+}
 
-    // Convert polar to cartesian for arc end point
-    const largeArcFlag = sliceAngle > 180 ? 1 : 0;
-    const startX = radius + radius * Math.cos(((startAngle - 90) * Math.PI) / 180);
-    const startY = radius + radius * Math.sin(((startAngle - 90) * Math.PI) / 180);
-    const endX = radius + radius * Math.cos(((endAngle - 90) * Math.PI) / 180);
-    const endY = radius + radius * Math.sin(((endAngle - 90) * Math.PI) / 180);
+export const PieChart: React.FC<PieChartProps> = ({ data, radius = 100 }) => {
+  const [hovIdx, setHovIdx] = useState<number | null>(null);
 
-    const pathData =
-      innerRadius > 0
-        ? // Donut chart path (outer arc + inner arc)
-          `M ${startX} ${startY} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${endX} ${endY} L ${radius + innerRadius * Math.cos(((endAngle - 90) * Math.PI) / 180)} ${radius + innerRadius * Math.sin(((endAngle - 90) * Math.PI) / 180)} A ${innerRadius} ${innerRadius} 0 ${largeArcFlag} 0 ${radius + innerRadius * Math.cos(((startAngle - 90) * Math.PI) / 180)} ${radius + innerRadius * Math.sin(((startAngle - 90) * Math.PI) / 180)} Z`
-        : // Full pie slice
-          `M ${radius} ${radius} L ${startX} ${startY} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${endX} ${endY} Z`;
+  const total = data.reduce((s, d) => s + d.value, 0);
+  if (total === 0 || data.length === 0) return <div style={{ height: radius }} />;
 
+  // ── Layout constants ──────────────────────────────────────────────────────
+  const pad  = 10;
+  const rx   = radius * 0.86;          // horizontal radius of ellipse
+  const ry   = rx * 0.36;              // vertical radius  (tilt / perspective)
+  const dep  = radius * 0.24;          // 3-D depth (pie thickness)
+  const cx   = rx + pad;               // ellipse center X
+  const cy   = ry + pad;               // ellipse center Y
+  const svgW = rx * 2 + pad * 2;
+  const svgH = cy + ry + dep + pad * 2;
+
+  // ── Compute slice angles ─────────────────────────────────────────────────
+  let cum = 0;
+  const slices = data.map((d, idx) => {
+    const start = cum;
+    cum += (d.value / total) * 360;
+    return { ...d, start, end: cum, idx };
+  });
+
+  // ── Path builders ────────────────────────────────────────────────────────
+
+  /** Top elliptical face of one slice */
+  function topPath(s: number, e: number): string {
+    const p1 = toXY(cx, cy, rx, ry, s);
+    const p2 = toXY(cx, cy, rx, ry, e);
+    const la = e - s > 180 ? 1 : 0;
+    return `M ${cx} ${cy} L ${p1.x} ${p1.y} A ${rx} ${ry} 0 ${la} 1 ${p2.x} ${p2.y} Z`;
+  }
+
+  /**
+   * Side-wall path for the "front half" of the pie (angles 90–270).
+   * Only this portion is visible to the viewer; the back half is hidden.
+   */
+  function sidePath(s: number, e: number): string {
+    const cs = Math.max(s, 90);
+    const ce = Math.min(e, 270);
+    if (cs >= ce) return "";
+    const p1 = toXY(cx, cy, rx, ry, cs);
+    const p2 = toXY(cx, cy, rx, ry, ce);
+    const la = ce - cs > 180 ? 1 : 0;
     return (
-      <path key={idx} d={pathData} fill={slice.color} stroke="#fff" strokeWidth={1} />
+      `M ${p1.x} ${p1.y + dep}` +
+      ` A ${rx} ${ry} 0 ${la} 1 ${p2.x} ${p2.y + dep}` +
+      ` L ${p2.x} ${p2.y}` +
+      ` A ${rx} ${ry} 0 ${la} 0 ${p1.x} ${p1.y} Z`
     );
+  }
+
+  /**
+   * Front-facing radial edge wall.
+   * Visible when the slice boundary (start or end spoke) faces the viewer.
+   */
+  function spokePath(angle: number): string {
+    // Only front-facing spokes (90–270)
+    if (angle < 90 || angle > 270) return "";
+    const p = toXY(cx, cy, rx, ry, angle);
+    return `M ${cx} ${cy + dep} L ${p.x} ${p.y + dep} L ${p.x} ${p.y} L ${cx} ${cy} Z`;
+  }
+
+  // Sort back-to-front by mid-point Y (painter's algorithm)
+  const sorted = [...slices].sort((a, b) => {
+    const ya = Math.sin((((a.start + a.end) / 2 - 90) * Math.PI) / 180);
+    const yb = Math.sin((((b.start + b.end) / 2 - 90) * Math.PI) / 180);
+    return ya - yb;
   });
 
   return (
-    <svg width={viewBoxSize} height={viewBoxSize} viewBox={`0 0 ${viewBoxSize} ${viewBoxSize}`}>
-      {slices}
-    </svg>
+    <div style={{ display: "flex", alignItems: "center", gap: "18px", justifyContent: "center", flexWrap: "wrap" }}>
+      {/* ── 3-D Pie ── */}
+      <svg
+        width={svgW}
+        height={svgH}
+        viewBox={`0 0 ${svgW} ${svgH}`}
+        style={{ overflow: "visible", flexShrink: 0 }}
+      >
+        {/* 1. Side arc walls (back → front) */}
+        {sorted.map((sl) => {
+          const sp = sidePath(sl.start, sl.end);
+          if (!sp) return null;
+          return (
+            <path
+              key={`sw-${sl.idx}`}
+              d={sp}
+              fill={darken(sl.color, 0.40)}
+              stroke="#fff"
+              strokeWidth={0.6}
+              opacity={hovIdx === sl.idx ? 0.75 : 1}
+            />
+          );
+        })}
+
+        {/* 2. Radial spoke walls (front-facing boundaries) */}
+        {sorted.map((sl) => {
+          const spStart = spokePath(sl.start);
+          const spEnd   = spokePath(sl.end);
+          return (
+            <React.Fragment key={`spk-${sl.idx}`}>
+              {spStart && <path d={spStart} fill={darken(sl.color, 0.28)} stroke="#fff" strokeWidth={0.4} />}
+              {spEnd   && <path d={spEnd}   fill={darken(sl.color, 0.28)} stroke="#fff" strokeWidth={0.4} />}
+            </React.Fragment>
+          );
+        })}
+
+        {/* 3. Top faces (back → front, on top of everything) */}
+        {sorted.map((sl) => {
+          const isHov = hovIdx === sl.idx;
+          return (
+            <path
+              key={`top-${sl.idx}`}
+              d={topPath(sl.start, sl.end)}
+              fill={sl.color}
+              stroke="#fff"
+              strokeWidth={1}
+              style={{
+                cursor: "pointer",
+                filter: isHov
+                  ? "brightness(1.14) drop-shadow(0 3px 8px rgba(0,0,0,0.22))"
+                  : "none",
+                transition: "filter 0.15s",
+              }}
+              onMouseEnter={() => setHovIdx(sl.idx)}
+              onMouseLeave={() => setHovIdx(null)}
+            >
+              <title>
+                {sl.label}: {sl.value.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} EUR
+                {" "}({((sl.value / total) * 100).toFixed(1)}%)
+              </title>
+            </path>
+          );
+        })}
+      </svg>
+
+      {/* ── Legend ── */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "7px", fontSize: "0.78rem", minWidth: 0 }}>
+        {data.map((d, idx) => (
+          <div
+            key={idx}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "7px",
+              cursor: "default",
+              fontWeight: hovIdx === idx ? 700 : 400,
+              color: hovIdx === idx ? "#1e293b" : "#64748b",
+              transition: "color 0.12s",
+            }}
+            onMouseEnter={() => setHovIdx(idx)}
+            onMouseLeave={() => setHovIdx(null)}
+          >
+            <span
+              style={{
+                width: 11,
+                height: 11,
+                borderRadius: "3px",
+                background: d.color,
+                flexShrink: 0,
+                boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
+              }}
+            />
+            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {d.label}
+            </span>
+            <strong style={{ color: "#1e293b", marginLeft: 4 }}>
+              {((d.value / total) * 100).toFixed(1)}%
+            </strong>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 };
 
