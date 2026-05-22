@@ -577,19 +577,19 @@ export function DashboardClient({ username }: DashboardClientProps) {
       return;
     }
 
-    setStatus({ type: "ok", text: "Resim kontrol ediliyor..." });
+    setStatus({ type: "ok", text: "Bild wird geprüft..." });
     try {
       const clean = await looksLikeCleanInvoiceImage(nextFile);
       if (clean) {
-        pushDebug("info", "Temiz resim algilandi", "Editor acilmadan dogrudan isleme alindi.");
+        pushDebug("info", "Sauberes Bild erkannt", "Ohne Editor direkt verarbeitet.");
         await uploadInvoice(nextFile);
       } else {
-        pushDebug("info", "Arka planli resim algilandi", "Editor popup aciliyor.");
+        pushDebug("info", "Bild mit Hintergrund erkannt", "Editor-Popup wird geöffnet.");
         setStatus(null);
         setEditorFile(nextFile);
       }
     } catch (error) {
-      pushDebug("info", "Resim kontrolu atlandi", error instanceof Error ? error.message : "");
+      pushDebug("info", "Bildprüfung übersprungen", error instanceof Error ? error.message : "");
       setStatus(null);
       setEditorFile(nextFile);
     }
@@ -931,6 +931,32 @@ function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), "image/png", 0.96));
 }
 
+function rotateCanvasByDegrees(source: HTMLCanvasElement, degrees: number): HTMLCanvasElement {
+  const normalized = ((degrees % 360) + 360) % 360;
+  if (Math.abs(normalized) < 0.001) return source;
+
+  const rad = (normalized * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(rad));
+  const sin = Math.abs(Math.sin(rad));
+  const w = source.width;
+  const h = source.height;
+  const outW = Math.max(1, Math.round(w * cos + h * sin));
+  const outH = Math.max(1, Math.round(w * sin + h * cos));
+
+  const out = document.createElement("canvas");
+  out.width = outW;
+  out.height = outH;
+  const ctx = out.getContext("2d");
+  if (!ctx) return source;
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.translate(outW / 2, outH / 2);
+  ctx.rotate(rad);
+  ctx.drawImage(source, -w / 2, -h / 2);
+  return out;
+}
+
 type DashboardImageEditorModalProps = {
   file: File;
   onCancel: () => void;
@@ -951,6 +977,10 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
   const [brightness, setBrightness] = useState(100);
   const [contrast, setContrast] = useState(100);
   const [isBW, setIsBW] = useState(false);
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const previewUrlRef = useRef("");
+  const [previewMode, setPreviewMode] = useState(false);
   const [error, setError] = useState("");
   const loadedRef = useRef(false);
 
@@ -978,6 +1008,12 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
       loadedRef.current = true;
       imageRef.current = image;
       setError("");
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+      }
+      setPreviewUrl("");
+      setPreviewFile(null);
+      setPreviewMode(false);
       setImageUrl(url);
       setImageSize({ x: image.naturalWidth, y: image.naturalHeight });
       setRotation(0);
@@ -990,12 +1026,19 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
     image.onerror = () => {
       if (loadedRef.current) return;
       URL.revokeObjectURL(url);
-      setError("Resim editor icin acilamadi. Orijinal dosya ile devam edebilirsiniz.");
+      setError("Bild konnte im Editor nicht geöffnet werden. Sie können mit der Originaldatei fortfahren.");
     };
     image.src = url;
 
     return () => URL.revokeObjectURL(url);
   }, [file]);
+
+  useEffect(() => {
+    previewUrlRef.current = previewUrl;
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -1099,9 +1142,9 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
-  async function confirmCrop() {
+  async function buildEditedFile(): Promise<File | null> {
     const image = imageRef.current;
-    if (!image || points.length !== 4) return;
+    if (!image || points.length !== 4) return null;
 
     const imageScaleX = (imageRect.width * zoom) / Math.max(1, image.naturalWidth);
     const imageScaleY = (imageRect.height * zoom) / Math.max(1, image.naturalHeight);
@@ -1129,7 +1172,7 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
     sourceCanvas.width = image.naturalWidth;
     sourceCanvas.height = image.naturalHeight;
     const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
-    if (!sourceContext) return;
+    if (!sourceContext) return null;
     sourceContext.imageSmoothingEnabled = true;
     sourceContext.imageSmoothingQuality = "high";
     sourceContext.drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight);
@@ -1138,7 +1181,7 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
     outputCanvas.width = finalWidth;
     outputCanvas.height = finalHeight;
     const outputContext = outputCanvas.getContext("2d");
-    if (!outputContext) return;
+    if (!outputContext) return null;
 
     const sourceImage = sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
     const result = outputContext.createImageData(outputCanvas.width, outputCanvas.height);
@@ -1179,39 +1222,77 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
         outputContext.drawImage(filteredCanvas, 0, 0);
       }
     }
-    const blob = await canvasBlob(outputCanvas);
+    const orientationAdjusted = Math.abs(rotation) > 0.5 ? rotateCanvasByDegrees(outputCanvas, rotation) : outputCanvas;
+    const blob = await canvasBlob(orientationAdjusted);
     if (!blob) {
       setError("Duzeltilmis resim olusturulamadi.");
-      return;
+      return null;
     }
 
-    onConfirm(new File([blob], `editor-${file.name.replace(/\.[^.]+$/, "")}.png`, { type: "image/png" }));
+    return new File([blob], `editor-${file.name.replace(/\.[^.]+$/, "")}.png`, { type: "image/png" });
+  }
+
+  async function confirmCrop() {
+    const edited = await buildEditedFile();
+    if (!edited) return;
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+      }
+    const url = URL.createObjectURL(edited);
+    setPreviewFile(edited);
+    setPreviewUrl(url);
+    setPreviewMode(true);
   }
 
   return (
     <div className="popup-overlay smart-editor-overlay">
-      <div className="popup-card smart-editor-modal" role="dialog" aria-modal="true" aria-label="Resim duzeltme editoru">
+      <div className="popup-card smart-editor-modal" role="dialog" aria-modal="true" aria-label="Bildkorrektur-Editor">
         <div className="smart-editor-header">
           <div>
-            <h3>Resmi duzelt</h3>
-            <p>Koseleri belge kenarlarina tasiyin. OK ile duzeltilmis resim isleme alinir.</p>
+            <h3>Bild korrigieren</h3>
+            <p>Verschieben Sie die Ecken auf die Dokumentränder. Mit OK wird das korrigierte Bild verarbeitet.</p>
           </div>
           <div className="smart-editor-header-actions">
             <button type="button" className="btn btn-outline btn-sm" onClick={onCancel}>
-              Iptal
+              Abbrechen
             </button>
-            <button type="button" className="btn btn-primary btn-sm" onClick={() => void confirmCrop()}>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => {
+                if (previewMode && previewFile) {
+                  onConfirm(previewFile);
+                  return;
+                }
+                void confirmCrop();
+              }}
+            >
               OK
             </button>
           </div>
         </div>
 
         <div className="smart-editor-stage" ref={stageRef}>
-          {imageUrl ? (
+          {previewMode && previewUrl ? (
+            <img
+              src={previewUrl}
+              alt="Korrigierte Vorschau"
+              style={{
+                left: "50%",
+                top: "50%",
+                width: "auto",
+                height: "100%",
+                maxWidth: "100%",
+                transform: "translate(-50%, -50%)",
+                filter: "none"
+              }}
+              draggable={false}
+            />
+          ) : imageUrl ? (
             <>
               <img
                 src={imageUrl}
-                alt="Duzeltilecek yukleme"
+                alt="Zu korrigierender Upload"
                 style={{
                   left: "50%",
                   top: "50%",
@@ -1235,7 +1316,7 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
                 className="smart-editor-rotate-handle"
                 style={{ left: rotateHandle.x, top: rotateHandle.y }}
                 onPointerDown={startRotate}
-                title="Serbest dondur"
+                title="Frei drehen"
               />
               {pointsStage.map((point, index) => (
                 <button
@@ -1249,12 +1330,12 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
               ))}
             </>
           ) : (
-            <span>Resim yukleniyor...</span>
+            <span>Bild wird geladen...</span>
           )}
         </div>
 
         {error ? <div className="alert alert-error">{error}</div> : null}
-        <div className="smart-editor-tools">
+        {!previewMode ? <div className="smart-editor-tools">
           <button
             type="button"
             className="smart-editor-icon-btn"
@@ -1281,7 +1362,7 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
             SW
           </button>
           <div className="smart-editor-slider">
-            <label htmlFor="editorBrightness">Parlaklik</label>
+            <label htmlFor="editorBrightness">Helligkeit</label>
             <input
               id="editorBrightness"
               type="range"
@@ -1316,13 +1397,24 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
               setPoints(defaults.map((p) => stageToLocalPoint(p, stageSize, { x: 0, y: 0 }, 0)));
             }}
           >
-            Sifirla
+            Zurücksetzen
           </button>
-        </div>
+        </div> : null}
         <div className="smart-editor-actions">
+          {previewMode ? (
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => {
+                setPreviewMode(false);
+              }}
+            >
+              Zurück
+            </button>
+          ) : null}
           {error ? (
             <button type="button" className="btn btn-outline" onClick={() => onConfirm(file)}>
-              Orijinali kullan
+              Original verwenden
             </button>
           ) : null}
         </div>

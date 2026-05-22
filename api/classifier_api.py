@@ -64,8 +64,9 @@ def klassifiziere_rechnung():
     datei_pfad = os.path.join(UPLOAD_ORDNER, datei_name)
     datei.save(datei_pfad)
     preprocess_debug = {}
+    orientation_locked = str(request.form.get("orientation_locked", "") or "").strip().lower() in ("1", "true", "yes", "on")
     if os.path.splitext(datei_pfad)[1].lower() in IMAGE_EXTS:
-        preprocess_debug = prepare_invoice_image_file_inplace(datei_pfad)
+        preprocess_debug = prepare_invoice_image_file_inplace(datei_pfad, orientation_locked=orientation_locked)
 
     # Optional: API-Key aus dem Web-Frontend
     api_key = (request.form.get('api_key') or "").strip()

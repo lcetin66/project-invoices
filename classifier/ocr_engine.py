@@ -104,13 +104,30 @@ def _kategorie_nach_produktlogik(ergebnis: dict, text: str = "") -> dict:
     """
     kategorie = str(ergebnis.get("kategorie", "") or "Sonstige").strip()
     brutto = str(ergebnis.get("brutto_betrag", "0") or "0")
-    full_text = (text or "").lower()
+    # Build product signal text from OCR text + model fields EXCLUDING supplier/address.
+    # This prevents merchant-name bias in category selection.
+    signal_parts = [
+        text or "",
+        str(ergebnis.get("notizen", "") or ""),
+        str(ergebnis.get("beschreibung", "") or ""),
+        str(ergebnis.get("positionen", "") or ""),
+        str(ergebnis.get("produkt", "") or ""),
+        str(ergebnis.get("artikel", "") or ""),
+    ]
+    full_text = " ".join(signal_parts).lower()
 
     # Hard override by purchased product / usage intent (not supplier name).
     product_rules = [
         ("Transport", [r"\b(benzin|diesel|tank|tanken|ladestrom|ladevorgang|parken|parkhaus|autobahn|maut|bahn|db|uber|bolt|taxi|fahrkarte|kfz)\b"]),
-        ("Gastronomie", [r"\b(airfryer|heissluftfritteuse|küche|kueche|küchengerät|kuechengeraet|kaffeemaschine|wasserkocher|toaster|mikrowelle|ofen)\b"]),
-        ("Software & Hardware", [r"\b(laptop|notebook|pc|monitor|ssd|hdd|router|headset|software|lizenz|abo|saas|app)\b"]),
+        (
+            "Gastronomie",
+            [
+                r"\b(airfryer|heissluftfritteuse|küche|kueche|küchengerät|kuechengeraet|kaffeemaschine|wasserkocher|toaster|mikrowelle|ofen)\b",
+                r"\b(pfanne|topf|messer|koch|küchenhelfer|kuechenhelfer|spatel|schneidebrett|mix(er)?|blender)\b",
+                r"\b(lebensmittel|getränk|getraenk|kaffee|cappuccino|sandwich|fruchtaufstrich|proteinpulver)\b",
+            ],
+        ),
+        ("Software & Hardware", [r"\b(laptop|notebook|pc|monitor|ssd|hdd|router|headset|software|lizenz|abo|saas|app|drucker|tablet|smartphone|grafikkarte)\b"]),
         ("Telekommunikation", [r"\b(sim|mobilfunk|telefon|internet|dsl|5g|roaming)\b"]),
     ]
     for cat, patterns in product_rules:
@@ -130,6 +147,10 @@ def _kategorie_nach_produktlogik(ergebnis: dict, text: str = "") -> dict:
                 ergebnis["mwst_satz"] = kw.get("mwst_satz", ergebnis.get("mwst_satz", ""))
                 ergebnis["mwst_betrag"] = kw.get("mwst_betrag", ergebnis.get("mwst_betrag", "0"))
                 ergebnis["waehrung"] = kw.get("waehrung", ergebnis.get("waehrung", "EUR"))
+
+    # If we still have no product signal, keep a conservative fallback.
+    if not full_text.strip() and kategorie in ("", "Sonstige"):
+        ergebnis["kategorie"] = "Sonstige"
 
     return _standard_response(ergebnis)
 
@@ -899,7 +920,7 @@ def _orient_invoice_upright(img):
         return img, "orientation_failed"
 
 
-def prepare_invoice_image(img):
+def prepare_invoice_image(img, orientation_locked: bool = False):
     """Return a cropped, deskewed, contrast-enhanced invoice image for OCR/vision."""
     if Image is None:
         return img
@@ -907,8 +928,13 @@ def prepare_invoice_image(img):
         src = ImageOps.exif_transpose(img) if ImageOps is not None else img
         src = src.convert("RGB")
 
-        # Baseline: orientation only on original frame (most robust).
-        base_oriented, _ = _orient_invoice_upright(src)
+        # Baseline orientation:
+        # - normal flow: auto-orient
+        # - editor-locked flow: keep user's manual orientation
+        if orientation_locked:
+            base_oriented = src
+        else:
+            base_oriented, _ = _orient_invoice_upright(src)
         base_score = _ocr_readability_score_for_rotation(base_oriented, 0)
         out = _enhance_invoice_image(base_oriented)
 
@@ -922,7 +948,10 @@ def prepare_invoice_image(img):
                 continue
             candidate = _enhance_invoice_image(cand)
             candidate = _trim_background_edges(candidate)
-            candidate_oriented, _ = _orient_invoice_upright(candidate)
+            if orientation_locked:
+                candidate_oriented = candidate
+            else:
+                candidate_oriented, _ = _orient_invoice_upright(candidate)
             score = _ocr_readability_score_for_rotation(candidate_oriented, 0)
             # Accept only if meaningfully better to avoid floor/background false positives.
             if score >= max(0.18, best_score + 0.12):
@@ -943,7 +972,7 @@ def prepare_invoice_image(img):
         return img
 
 
-def prepare_invoice_image_file_inplace(datei_pfad: str) -> dict:
+def prepare_invoice_image_file_inplace(datei_pfad: str, orientation_locked: bool = False) -> dict:
     """
     Kırpma/düzeltmeyi upload edilen resme uygular.
     Güvenli değilse dosyayı değiştirmez; sonuç debug için kısa meta döndürür.
@@ -962,7 +991,7 @@ def prepare_invoice_image_file_inplace(datei_pfad: str) -> dict:
             original = original.convert("RGB")
             ow, oh = original.size
             result["original_size"] = [ow, oh]
-            processed = prepare_invoice_image(original)
+            processed = prepare_invoice_image(original, orientation_locked=orientation_locked)
             pw, ph = processed.size
             result["processed_size"] = [pw, ph]
 
@@ -981,7 +1010,7 @@ def prepare_invoice_image_file_inplace(datei_pfad: str) -> dict:
         with open(datei_pfad, "wb") as f:
             f.write(out.getvalue())
         result["applied"] = True
-        result["reason"] = "ok"
+        result["reason"] = "ok_editor_locked" if orientation_locked else "ok"
         return result
     except Exception as ex:
         result["reason"] = f"exception:{type(ex).__name__}"
@@ -1641,6 +1670,7 @@ Felder:
 WICHTIG:
 - Kategorisierung nach dem GEKAUFTEN PRODUKT / der LEISTUNG aus den Positionen.
 - Nicht nach Lieferantenname/Marke kategorisieren.
+- Lieferantenname darf die Kategorie NICHT beeinflussen (z.B. MediaMarkt kann je nach gekauftem Produkt auch "Gastronomie" sein).
 - Falls mehrere Positionen vorliegen: nach dem Hauptkostenblock entscheiden.
 - Rechnungsdatum NUR aus expliziten Datumsfeldern lesen (z.B. "Datum", "Rechnungsdatum", "Belegdatum", "Gedruckt am").
 - Bei Kassenbons mit mehreren Daten: Bevorzuge das KAUF-/BELEGDATUM in der Zeile mit "Datum" (oft nahe "Uhrzeit"/"Beleg Nr.").
@@ -1875,6 +1905,7 @@ WICHTIG:
   - Wenn du z.B. die Zahlen "12,87" und "0,90" für 7% siehst, dann ist "12,87" der Netto-Betrag (netto_betrag_2) und "0,90" der MwSt-Betrag (mwst_betrag_2).
   - Vertausche Netto und MwSt NIEMALS!
 - KATEGORIE MUSS nach gekauftem Produkt/Verwendungszweck erfolgen, NICHT nach Lieferantenname.
+- Lieferantenname/Haendler/Marke darf die Kategorie NICHT steuern.
 - Beispiele:
   - Airfryer/Küchengerät/Lebensmittelnahe Ausgaben => "Gastronomie"
   - Lebensmittel, Getränke, Kaffee, Cappuccino, Sandwich, Fruchtaufstrich, Proteinpulver => "Gastronomie"
@@ -2007,6 +2038,7 @@ Felder:
 WICHTIG:
 - Kategorisierung nach dem GEKAUFTEN PRODUKT / der LEISTUNG (Positionszeilen).
 - Nicht nach Lieferantenname/Marke kategorisieren.
+- Lieferantenname darf die Kategorie NICHT beeinflussen (z.B. MediaMarkt + Airfryer => "Gastronomie").
 - Falls mehrere Positionen vorhanden sind, entscheide nach dem größten/zentralen Kostenblock.
 - Rechnungsdatum NUR aus expliziten Datumsfeldern lesen (Datum/Rechnungsdatum/Belegdatum/Gedruckt am), niemals raten.
 - Bei mehreren Datumsangaben (z.B. TSE Start/Ende/Signatur): nur das Kauf-/Belegdatum verwenden; technische Zeitstempel ignorieren.
