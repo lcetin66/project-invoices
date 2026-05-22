@@ -34,6 +34,7 @@ export function DashboardStatsClient() {
   const [activeTab, setActiveTab] = useState<"purchases" | "sales" | "all">("purchases");
   const [timeframe, setTimeframe] = useState<"7days" | "30days" | "all">("30days");
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; value: string } | null>(null);
+  const [activePieSlide, setActivePieSlide] = useState(0);
 
   useEffect(() => {
     async function loadData() {
@@ -169,6 +170,171 @@ export function DashboardStatsClient() {
     }));
   }, [categoryShare]);
 
+  const pieSlides = useMemo(() => {
+    const palette = ["#2563eb", "#ef4444", "#111827", "#10b981", "#f59e0b", "#8b5cf6", "#06b6d4", "#64748b"];
+
+    const incoming = Number(stats?.totals.eingang_summe ?? 0);
+    const outgoing = Number(stats?.totals.ausgang_summe ?? 0);
+
+    const supplierTotals = new Map<string, number>();
+    const monthlyCategory = new Map<string, number>();
+    const taxByRate = new Map<string, number>();
+    const weekdayTotals = [0, 0, 0, 0, 0, 0, 0];
+    let overdue = 0;
+    let next7Days = 0;
+    let noDue = 0;
+    let qualityHigh = 0;
+    let qualityMid = 0;
+    let qualityLow = 0;
+    let qualityMissing = 0;
+
+    const now = new Date();
+    const thisMonth = now.getMonth();
+    const thisYear = now.getFullYear();
+    const nextWeek = new Date(now);
+    nextWeek.setDate(now.getDate() + 7);
+
+    for (const inv of invoices) {
+      const amount = Number(inv.brutto_betrag ?? 0);
+      const supplier = inv.lieferant || "Unbekannt";
+      supplierTotals.set(supplier, (supplierTotals.get(supplier) ?? 0) + amount);
+
+      const score = Number(inv.qualitaet_score ?? 0);
+      if (!Number.isFinite(score) || score <= 0) qualityMissing += 1;
+      else if (score >= 80) qualityHigh += 1;
+      else if (score >= 50) qualityMid += 1;
+      else qualityLow += 1;
+
+      const dueText = String(inv.faelligkeitsdatum ?? "").trim();
+      if (dueText) {
+        const due = new Date(dueText);
+        if (!Number.isNaN(due.getTime())) {
+          if (due < now) overdue += 1;
+          else if (due <= nextWeek) next7Days += 1;
+        } else {
+          noDue += 1;
+        }
+      } else {
+        noDue += 1;
+      }
+
+      const rawDate = String(inv.rechnungsdatum || inv.hochladezeit || "");
+      const d = new Date(rawDate);
+      if (!Number.isNaN(d.getTime())) {
+        const day = (d.getDay() + 6) % 7;
+        weekdayTotals[day] += amount;
+        if (d.getMonth() === thisMonth && d.getFullYear() === thisYear) {
+          const cat = inv.kategorie_name || "Sonstige";
+          monthlyCategory.set(cat, (monthlyCategory.get(cat) ?? 0) + amount);
+        }
+      }
+
+      const vatAmount = Number(String(inv.mwst_betrag ?? "0").replace(",", "."));
+      const vatRate = String(inv.mwst_satz ?? "").trim() || "Unbekannt";
+      if (Number.isFinite(vatAmount) && vatAmount >= 0) {
+        taxByRate.set(vatRate, (taxByRate.get(vatRate) ?? 0) + vatAmount);
+      }
+    }
+
+    const supplierEntries = Array.from(supplierTotals.entries()).sort((a, b) => b[1] - a[1]);
+    const topSuppliers = supplierEntries.slice(0, 5);
+    const restSuppliers = supplierEntries.slice(5).reduce((sum, [, v]) => sum + v, 0);
+    const topSupplierData = topSuppliers.map(([label, value], i) => ({ label, value, color: palette[i % palette.length] }));
+    if (restSuppliers > 0) topSupplierData.push({ label: "Andere", value: restSuppliers, color: "#94a3b8" });
+
+    const monthCatEntries = Array.from(monthlyCategory.entries()).sort((a, b) => b[1] - a[1]);
+    const monthTopCats = monthCatEntries.slice(0, 4);
+    const monthOther = monthCatEntries.slice(4).reduce((sum, [, v]) => sum + v, 0);
+    const monthCatData = monthTopCats.map(([label, value], i) => ({ label, value, color: palette[i % palette.length] }));
+    if (monthOther > 0) monthCatData.push({ label: "Andere", value: monthOther, color: "#a3a3a3" });
+
+    const vatData = Array.from(taxByRate.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([rate, value], i) => ({
+        label: `MwSt ${rate}%`,
+        value,
+        color: palette[i % palette.length]
+      }));
+
+    const recurringBySupplier = Array.from(
+      invoices.reduce((map, inv) => {
+        const key = inv.lieferant || "Unbekannt";
+        const prev = map.get(key) ?? { count: 0, total: 0 };
+        prev.count += 1;
+        prev.total += Number(inv.brutto_betrag ?? 0);
+        map.set(key, prev);
+        return map;
+      }, new Map<string, { count: number; total: number }>())
+    );
+    const recurring = recurringBySupplier.filter(([, v]) => v.count > 1).reduce((sum, [, v]) => sum + v.total, 0);
+    const oneOff = recurringBySupplier.filter(([, v]) => v.count <= 1).reduce((sum, [, v]) => sum + v.total, 0);
+
+    const weekdayLabels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+    const weekdayData = weekdayTotals.map((value, i) => ({
+      label: weekdayLabels[i],
+      value,
+      color: palette[i % palette.length]
+    }));
+
+    return [
+      {
+        title: "Monatlicher Cashflow",
+        subtitle: "Einnahmen vs. Ausgaben",
+        data: [
+          { label: "Eingänge", value: incoming, color: "#2563eb" },
+          { label: "Ausgänge", value: outgoing, color: "#ef4444" }
+        ]
+      },
+      {
+        title: "Kategorie-Trend (aktueller Monat)",
+        subtitle: "Top-Kategorien nach Betrag",
+        data: monthCatData.length > 0 ? monthCatData : [{ label: "Keine Daten", value: 1, color: "#cbd5e1" }]
+      },
+      {
+        title: "Tedarikçi Konsantrasyonu",
+        subtitle: "Top 5 + Andere",
+        data: topSupplierData.length > 0 ? topSupplierData : [{ label: "Keine Daten", value: 1, color: "#cbd5e1" }]
+      },
+      {
+        title: "MwSt Verteilung",
+        subtitle: "Steuerbetrag nach Steuersatz",
+        data: vatData.length > 0 ? vatData : [{ label: "Keine Daten", value: 1, color: "#cbd5e1" }]
+      },
+      {
+        title: "Fälligkeit Status",
+        subtitle: "Überfällig / 7 Tage / Offen",
+        data: [
+          { label: "Überfällig", value: overdue, color: "#ef4444" },
+          { label: "Nächste 7 Tage", value: next7Days, color: "#f59e0b" },
+          { label: "Ohne Fälligkeitsdatum", value: noDue, color: "#64748b" }
+        ]
+      },
+      {
+        title: "Belge Kalite Dağılımı",
+        subtitle: "OCR/AI Qualität",
+        data: [
+          { label: "Yüksek", value: qualityHigh, color: "#10b981" },
+          { label: "Orta", value: qualityMid, color: "#2563eb" },
+          { label: "Düşük", value: qualityLow, color: "#ef4444" },
+          { label: "Yok", value: qualityMissing, color: "#6b7280" }
+        ]
+      },
+      {
+        title: "Düzenli vs Tek Sefer",
+        subtitle: "Lieferant bazlı tekrar",
+        data: [
+          { label: "Düzenli", value: recurring, color: "#111827" },
+          { label: "Tek Sefer", value: oneOff, color: "#2563eb" }
+        ]
+      },
+      {
+        title: "Haftalık Harcama",
+        subtitle: "Haftanın günlerine göre",
+        data: weekdayData.some((d) => d.value > 0) ? weekdayData : [{ label: "Keine Daten", value: 1, color: "#cbd5e1" }]
+      }
+    ];
+  }, [invoices, stats]);
+
   // Supplier data for table
   const supplierData = useMemo(() => {
     const map = new Map<string, { total: number; count: number }>();
@@ -265,6 +431,50 @@ export function DashboardStatsClient() {
               <span className="chart-tooltip-value">{tooltip.value}</span>
             </div>
           )}
+        </div>
+
+        <div className="pie-slider-block">
+          <div className="pie-slider-head">
+            <div>
+              <h4>{pieSlides[activePieSlide]?.title}</h4>
+              <p>{pieSlides[activePieSlide]?.subtitle}</p>
+            </div>
+            <div className="pie-slider-controls">
+              <button
+                type="button"
+                onClick={() => setActivePieSlide((prev) => (prev === 0 ? pieSlides.length - 1 : prev - 1))}
+                aria-label="Vorherige Statistik"
+              >
+                ←
+              </button>
+              <span>
+                {activePieSlide + 1}/{pieSlides.length}
+              </span>
+              <button
+                type="button"
+                onClick={() => setActivePieSlide((prev) => (prev === pieSlides.length - 1 ? 0 : prev + 1))}
+                aria-label="Nächste Statistik"
+              >
+                →
+              </button>
+            </div>
+          </div>
+          <div className="pie-slider-content">
+            <div className="pie-slider-chart">
+              <PieChart data={pieSlides[activePieSlide]?.data ?? []} radius={92} innerRadius={54} />
+            </div>
+            <div className="pie-slider-legend">
+              {(pieSlides[activePieSlide]?.data ?? []).map((item) => (
+                <div key={`${pieSlides[activePieSlide]?.title}-${item.label}`} className="pie-legend-row">
+                  <span className="pie-legend-dot" style={{ background: item.color }} />
+                  <span className="pie-legend-label">{item.label}</span>
+                  <strong className="pie-legend-value">
+                    {item.value.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}
+                  </strong>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="chart-period-selectors">
