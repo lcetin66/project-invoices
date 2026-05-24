@@ -8,3 +8,8 @@ pnpm-debug.log*
 .env.local
 .env
 .DS_Store
+
+# Temporary/backup files; review and clean up later.
+tsconfig.tsbuildinfo
+original_dashboard_backup.txt
+step166.txt
