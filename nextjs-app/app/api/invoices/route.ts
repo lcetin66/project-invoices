@@ -157,6 +157,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const typRaw = url.searchParams.get("typ");
     const typ = typRaw === "ausgang" ? "ausgang" : typRaw === "eingang" ? "eingang" : undefined;
     const category = url.searchParams.get("category")?.trim() || undefined;
+    const search = url.searchParams.get("search")?.trim() || undefined;
 
     const limitRaw = url.searchParams.get("limit");
     const limit = limitRaw ? Number(limitRaw) : undefined;
@@ -164,6 +165,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const invoices = await listInvoices({
       typ,
       category,
+      search,
       limit: Number.isFinite(limit) && (limit ?? 0) > 0 ? limit : undefined
     });
 

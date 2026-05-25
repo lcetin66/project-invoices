@@ -7,6 +7,7 @@ export const de = {
   nav: {
     dashboard: "Dashboard",
     input: "Eingabe",
+    search: "Suche",
     admin: "Verwaltung",
     invoices: "Rechnungen",
     user: "Benutzer"
@@ -237,6 +238,15 @@ export const de = {
     deactivated: "Kategorie wurde deaktiviert.",
     deleted: "Kategorie gelöscht.",
     budgetSaved: "Budget gespeichert."
+  },
+  search: {
+    label: "Rechnungen suchen",
+    placeholder: "Lieferant, Betrag, Datum, Kategorie, Datei oder Original-Bildname...",
+    startHint: "Tippen Sie in die Suche, um Ergebnisse zu sehen.",
+    resultCount: "{count} Treffer",
+    empty: "Keine passenden Rechnungen gefunden.",
+    originalImageName: "Original-Bildname",
+    savedFileName: "Gespeicherter Dateiname"
   },
   stats: {
     fallbackInsights: [

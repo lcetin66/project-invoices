@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS kategorien (
 CREATE TABLE IF NOT EXISTS rechnungen (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     dateiname VARCHAR(255) NOT NULL,
+    original_dateiname VARCHAR(255) NULL,
     dateipfad VARCHAR(512) NOT NULL,
     dateityp VARCHAR(20) NOT NULL,
     rechnung_typ ENUM('eingang', 'ausgang') NOT NULL DEFAULT 'eingang',
