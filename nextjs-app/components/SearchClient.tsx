@@ -10,6 +10,49 @@ function formatAmount(value: number | null | undefined): string {
   return Number.isFinite(num) ? num.toFixed(2) : "0.00";
 }
 
+type TaxLine = {
+  rate: string;
+  netto: string;
+  tax: string;
+};
+
+function formatTaxValue(value: string): string {
+  const normalized = Number(value.replace(",", "."));
+  return Number.isFinite(normalized) ? normalized.toFixed(2) : value;
+}
+
+function extractTaxLines(
+  description: string | null | undefined,
+  mwstSatz: string | null | undefined,
+  mwstBetrag: number | null | undefined,
+  nettoBetrag: number | null | undefined
+): TaxLine[] {
+  const lines: TaxLine[] = [];
+  const rawLines = String(description || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const linePattern =
+    /(\d{1,2}(?:[.,]\d{1,2})?)\s*%\s*.*?netto\s*[:=]?\s*([0-9]+(?:[.,][0-9]{1,2})?).*?(?:mwst|ust|vat|steuer)\s*[:=]?\s*([0-9]+(?:[.,][0-9]{1,2})?)/i;
+
+  for (const line of rawLines) {
+    const match = line.match(linePattern);
+    if (!match) continue;
+    lines.push({
+      rate: match[1].replace(".", ","),
+      netto: match[2].replace(".", ","),
+      tax: match[3].replace(".", ",")
+    });
+  }
+
+  if (lines.length === 0 && (mwstSatz || mwstBetrag != null || nettoBetrag != null)) {
+    lines.push({
+      rate: String(mwstSatz || "").replace(".", ","),
+      netto: nettoBetrag == null ? "" : String(nettoBetrag.toFixed(2)).replace(".", ","),
+      tax: mwstBetrag == null ? "" : String(mwstBetrag.toFixed(2)).replace(".", ",")
+    });
+  }
+
+  return lines;
+}
+
 function ZoomOutIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -72,6 +115,18 @@ export function SearchClient() {
 
   const hasQuery = query.trim().length > 0;
   const resultCount = useMemo(() => invoices.length, [invoices]);
+  const selectedTaxLines = useMemo(
+    () =>
+      selectedInvoice
+        ? extractTaxLines(
+            selectedInvoice.beschreibung,
+            selectedInvoice.mwst_satz,
+            selectedInvoice.mwst_betrag,
+            selectedInvoice.netto_betrag
+          )
+        : [],
+    [selectedInvoice]
+  );
 
   function renderHighlightedText(text: string | null | undefined): ReactNode {
     const source = String(text ?? "");
@@ -187,9 +242,40 @@ export function SearchClient() {
                 <div><strong>{t.invoices.category}:</strong> {selectedInvoice.kategorie_name || t.dashboard.uncategorized}</div>
                 <div><strong>{t.invoices.supplier}:</strong> {selectedInvoice.lieferant || t.common.unknown}</div>
                 <div><strong>{t.invoices.gross}:</strong> {formatAmount(selectedInvoice.brutto_betrag)} {selectedInvoice.waehrung || "EUR"}</div>
-                <div><strong>{t.invoices.net}:</strong> {formatAmount(selectedInvoice.netto_betrag)} {selectedInvoice.waehrung || "EUR"}</div>
-                <div><strong>{t.invoices.vatAmount}:</strong> {formatAmount(selectedInvoice.mwst_betrag)} {selectedInvoice.waehrung || "EUR"}</div>
-                <div><strong>{t.invoices.vatRate}:</strong> {selectedInvoice.mwst_satz || "-"}</div>
+                {selectedTaxLines.length > 1 ? (
+                  <>
+                    <div className="search-tax-lines">
+                      <strong>{t.invoices.net}:</strong>
+                      <div>
+                        {selectedTaxLines.map((line, index) => (
+                          <span key={`${line.rate}-${line.netto}-${index}`}>{line.rate}%: {formatTaxValue(line.netto)} {selectedInvoice.waehrung || "EUR"}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="search-tax-lines">
+                      <strong>{t.invoices.vatAmount}:</strong>
+                      <div>
+                        {selectedTaxLines.map((line, index) => (
+                          <span key={`${line.rate}-${line.tax}-${index}`}>{line.rate}%: {formatTaxValue(line.tax)} {selectedInvoice.waehrung || "EUR"}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="search-tax-lines">
+                      <strong>{t.invoices.vatRate}:</strong>
+                      <div>
+                        {selectedTaxLines.map((line, index) => (
+                          <span key={`${line.rate}-${index}`}>{line.rate}%</span>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div><strong>{t.invoices.net}:</strong> {formatAmount(selectedInvoice.netto_betrag)} {selectedInvoice.waehrung || "EUR"}</div>
+                    <div><strong>{t.invoices.vatAmount}:</strong> {formatAmount(selectedInvoice.mwst_betrag)} {selectedInvoice.waehrung || "EUR"}</div>
+                    <div><strong>{t.invoices.vatRate}:</strong> {selectedInvoice.mwst_satz || "-"}</div>
+                  </>
+                )}
                 <div><strong>{t.invoices.dueDate}:</strong> {selectedInvoice.faelligkeitsdatum || "-"}</div>
                 <div className="search-view-description">
                   <strong>{t.invoices.description}:</strong>

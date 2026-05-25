@@ -223,14 +223,17 @@ export async function listInvoices(filters?: {
       LOWER(CONCAT_WS(' ',
         COALESCE(r.dateiname, ''),
         COALESCE(r.original_dateiname, ''),
+        COALESCE(r.dateityp, ''),
+        COALESCE(r.rechnung_typ, ''),
+        COALESCE(r.rechnungsdatum, ''),
         COALESCE(r.beschreibung, ''),
         COALESCE(r.lieferant, ''),
         COALESCE(r.kategorie_name, ''),
         COALESCE(r.netto_betrag, ''),
+        COALESCE(r.mwst_satz, ''),
         COALESCE(r.mwst_betrag, ''),
         COALESCE(r.brutto_betrag, ''),
         COALESCE(r.waehrung, ''),
-        COALESCE(r.rechnungsdatum, ''),
         COALESCE(r.faelligkeitsdatum, ''),
         COALESCE(r.hochladezeit, ''),
         COALESCE(r.aktualisierungszeit, '')
@@ -275,8 +278,46 @@ export async function getInvoiceById(invoiceId: number): Promise<Invoice | null>
   return mapInvoice(rows[0]);
 }
 
+export async function findDuplicateInvoice(data: {
+  lieferant: string;
+  bruttoBetrag: number;
+  rechnungsdatum: string | null;
+}): Promise<Invoice | null> {
+  const supplier = String(data.lieferant || "").trim();
+  if (!supplier || !(data.bruttoBetrag > 0)) {
+    return null;
+  }
+
+  const params: Array<string | number> = [supplier.toLowerCase(), data.bruttoBetrag];
+  let dateClause = "";
+  if (data.rechnungsdatum) {
+    dateClause = "AND r.rechnungsdatum = ? ";
+    params.push(data.rechnungsdatum);
+  }
+
+  const rows = await queryRows<RowDataPacket[]>(
+    `
+    SELECT r.*, k.farbe
+    FROM rechnungen r
+    LEFT JOIN kategorien k ON r.kategorie_id = k.id
+    WHERE LOWER(TRIM(r.lieferant)) = ?
+      AND ABS(COALESCE(r.brutto_betrag, 0) - ?) < 0.01
+      ${dateClause}
+    ORDER BY r.hochladezeit DESC
+    LIMIT 1
+    `,
+    params
+  );
+
+  if (rows.length === 0) {
+    return null;
+  }
+  return mapInvoice(rows[0]);
+}
+
 export async function insertInvoice(data: {
   dateiname: string;
+  originalDateiname: string | null;
   dateityp: string;
   rechnungTyp: "eingang" | "ausgang";
   rechnungsdatum: string | null;
@@ -295,14 +336,15 @@ export async function insertInvoice(data: {
   const result = await execute(
     `
     INSERT INTO rechnungen (
-      dateiname, dateipfad, dateityp, rechnung_typ, rechnungsdatum,
+      dateiname, original_dateiname, dateipfad, dateityp, rechnung_typ, rechnungsdatum,
       beschreibung, lieferant, kategorie_id, kategorie_name,
       netto_betrag, mwst_satz, mwst_betrag, brutto_betrag, waehrung,
       qualitaet_score, faelligkeitsdatum
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       data.dateiname,
+      data.originalDateiname,
       `uploads/${data.dateiname}`,
       data.dateityp,
       data.rechnungTyp,

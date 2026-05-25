@@ -14,9 +14,18 @@ type UploadResult = {
 
 type UploadApiResponse = {
   ok?: boolean;
+  duplicate?: boolean;
   message?: string;
   warning?: string | null;
   datei_name?: string;
+  previousInvoice?: {
+    id?: number;
+    dateiname?: string;
+    dateityp?: string;
+    lieferant?: string | null;
+    brutto_betrag?: number | null;
+    rechnungsdatum?: string | null;
+  } | null;
   debug?: {
     ocr_text_len?: number;
     ocr_text_preview?: string;
@@ -25,6 +34,11 @@ type UploadApiResponse = {
   } | null;
   ergebnis?: Record<string, unknown>;
   qualitaet_score?: number;
+};
+
+type UploadRequestError = Error & {
+  status?: number;
+  payload?: UploadApiResponse;
 };
 
 type DebugLevel = "info" | "success" | "error";
@@ -247,6 +261,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
   const [faelligkeitsdatum, setFaelligkeitsdatum] = useState("");
 
   const [status, setStatus] = useState<{ type: "ok" | "error"; text: string } | null>(null);
+  const [duplicateModal, setDuplicateModal] = useState<UploadApiResponse["previousInvoice"]>(null);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [lastFileName, setLastFileName] = useState("");
@@ -260,6 +275,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
   const [debugMinimized, setDebugMinimized] = useState(false);
   const [debugEntries, setDebugEntries] = useState<DebugEntry[]>([]);
   const [activeDurationMs, setActiveDurationMs] = useState(0);
+  const lastOrientationLockedRef = useRef(false);
 
   const [invoices, setInvoices] = useState<Invoice[]>([]);
 
@@ -444,7 +460,10 @@ export function DashboardClient({ username }: DashboardClientProps) {
         const payload = parseXhrJson(xhr);
         if (xhr.status < 200 || xhr.status >= 300 || !payload.ok) {
           pushDebug("error", t.dashboard.apiError, payload.message ?? `${t.dashboard.uploadFailed} (${xhr.status})`);
-          reject(new Error(payload.message ?? `${t.dashboard.uploadFailed} (${xhr.status})`));
+          const err = new Error(payload.message ?? `${t.dashboard.uploadFailed} (${xhr.status})`) as UploadRequestError;
+          err.status = xhr.status;
+          err.payload = payload;
+          reject(err);
           return;
         }
         const processingStart = operationRef.current.processingStartedAt;
@@ -458,7 +477,24 @@ export function DashboardClient({ username }: DashboardClientProps) {
     });
   }
 
-  async function uploadInvoice(selectedFile: File | null): Promise<void> {
+  async function checkDuplicatePreUpload(selectedFile: File): Promise<UploadApiResponse | null> {
+    const formData = new FormData();
+    formData.append("file", selectedFile);
+    const response = await fetch("/api/invoices?check_duplicate=1", {
+      method: "POST",
+      body: formData
+    });
+    const payload = (await response.json().catch(() => ({}))) as UploadApiResponse;
+    if (response.status === 409 && payload.duplicate) {
+      return payload;
+    }
+    if (!response.ok) {
+      throw new Error(payload.message ?? `${t.dashboard.uploadFailed} (${response.status})`);
+    }
+    return null;
+  }
+
+  async function uploadInvoice(selectedFile: File | null, forceDuplicate = false, orientationLocked = false): Promise<void> {
     if (!selectedFile) {
       setStatus({ type: "error", text: t.dashboard.selectFileError });
       return;
@@ -473,6 +509,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
       uploadStartedAt: null,
       processingStartedAt: null
     };
+    lastOrientationLockedRef.current = orientationLocked;
     pushDebug("info", t.dashboard.newProcess, selectedFile.name || t.common.unknown);
     setProgressState({
       open: true,
@@ -488,6 +525,8 @@ export function DashboardClient({ username }: DashboardClientProps) {
       formData.append("rechnung_typ", rechnungTyp);
       if (rechnungsdatum) formData.append("rechnungsdatum", rechnungsdatum);
       if (faelligkeitsdatum) formData.append("faelligkeitsdatum", faelligkeitsdatum);
+      if (forceDuplicate) formData.append("force_duplicate", "1");
+      if (orientationLocked) formData.append("orientation_locked", "1");
 
       const data = await uploadWithProgress(formData);
 
@@ -498,6 +537,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
       }));
 
       setStatus({ type: "ok", text: t.dashboard.processedOk });
+      setDuplicateModal(null);
       if (data.warning) {
         pushDebug("info", t.dashboard.partialDetection, String(data.warning));
       }
@@ -535,6 +575,10 @@ export function DashboardClient({ username }: DashboardClientProps) {
       await new Promise((resolve) => window.setTimeout(resolve, 220));
       setProgressState((prev) => ({ ...prev, open: false }));
     } catch (error) {
+      const uploadError = error as UploadRequestError;
+      if (uploadError?.status === 409 && uploadError.payload?.duplicate && uploadError.payload.previousInvoice) {
+        setDuplicateModal(uploadError.payload.previousInvoice);
+      }
       const errorMessage = error instanceof Error ? error.message : t.dashboard.serverUploadError;
       setProgressState((prev) => ({
         ...prev,
@@ -579,18 +623,34 @@ export function DashboardClient({ username }: DashboardClientProps) {
 
     setStatus({ type: "ok", text: "Bild wird geprüft..." });
     try {
+      const duplicatePayload = await checkDuplicatePreUpload(nextFile);
+      if (duplicatePayload?.duplicate) {
+        const duplicateMessage = String(duplicatePayload.message ?? t.api.duplicateInvoiceProcessed);
+        setStatus({ type: "error", text: duplicateMessage });
+        pushDebug("error", t.dashboard.apiError, duplicateMessage);
+        setDuplicateModal(
+          duplicatePayload.previousInvoice ?? {
+            dateiname: nextFile.name,
+            dateityp: nextFile.type || "image/*",
+            lieferant: null,
+            brutto_betrag: null,
+            rechnungsdatum: null
+          }
+        );
+        return;
+      }
       const clean = await looksLikeCleanInvoiceImage(nextFile);
       if (clean) {
         pushDebug("info", "Sauberes Bild erkannt", "Ohne Editor direkt verarbeitet.");
         await uploadInvoice(nextFile);
       } else {
         pushDebug("info", "Bild mit Hintergrund erkannt", "Editor-Popup wird geöffnet.");
-        setStatus(null);
         setEditorFile(nextFile);
       }
     } catch (error) {
-      pushDebug("info", "Bildprüfung übersprungen", error instanceof Error ? error.message : "");
-      setStatus(null);
+      const checkError = error instanceof Error ? error.message : "";
+      pushDebug("error", "Bildprüfung fehlgeschlagen", checkError);
+      setStatus({ type: "error", text: checkError || t.dashboard.serverUploadError });
       setEditorFile(nextFile);
     }
   }
@@ -598,7 +658,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
   async function acceptEditedFile(editedFile: File): Promise<void> {
     setEditorFile(null);
     applySelectedFile(editedFile);
-    await uploadInvoice(editedFile);
+    await uploadInvoice(editedFile, false, true);
   }
 
   function onDragEnter(event: DragEvent<HTMLFormElement>): void {
@@ -656,6 +716,52 @@ export function DashboardClient({ username }: DashboardClientProps) {
           onCancel={() => setEditorFile(null)}
           onConfirm={(editedFile) => void acceptEditedFile(editedFile)}
         />
+      ) : null}
+
+      {duplicateModal ? (
+        <div className="popup-overlay">
+          <div className="popup-card duplicate-popup" role="dialog" aria-modal="true">
+            <h3>{t.dashboard.duplicateTitle}</h3>
+            <p>{t.dashboard.duplicateText}</p>
+            <div className="duplicate-grid">
+              <div className="duplicate-preview">
+                {String(duplicateModal.dateiname || "").toLowerCase().endsWith(".pdf") ? (
+                  <object
+                    data={`/api/uploads/${encodeURIComponent(String(duplicateModal.dateiname || ""))}#page=1&view=FitH`}
+                    type="application/pdf"
+                    className="duplicate-doc"
+                  />
+                ) : (
+                  <img
+                    src={`/api/uploads/${encodeURIComponent(String(duplicateModal.dateiname || ""))}`}
+                    alt={t.dashboard.duplicatePreviewAlt}
+                    className="duplicate-doc"
+                  />
+                )}
+              </div>
+              <div className="duplicate-meta">
+                <strong>{duplicateModal.lieferant || t.common.unknown}</strong>
+                <span>{t.dashboard.invoiceDate}: {duplicateModal.rechnungsdatum || "-"}</span>
+                <span>{t.dashboard.grossAmount}: {duplicateModal.brutto_betrag != null ? `${Number(duplicateModal.brutto_betrag).toFixed(2)} EUR` : "-"}</span>
+              </div>
+            </div>
+            <div className="duplicate-actions">
+              <button type="button" className="btn btn-primary" onClick={() => setDuplicateModal(null)}>
+                {t.common.ok}
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => {
+                  setDuplicateModal(null);
+                  void uploadInvoice(file, true, lastOrientationLockedRef.current);
+                }}
+              >
+                {t.dashboard.duplicateProceed}
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       <section className="upload-section">
@@ -889,13 +995,25 @@ function getContainedImageRect(stage: Point, image: Point): { left: number; top:
 
 function defaultEditorPoints(stage: Point, image: Point): Point[] {
   const rect = getContainedImageRect(stage, image);
-  const insetX = Math.max(16, rect.width * 0.06);
-  const insetY = Math.max(16, rect.height * 0.06);
+  const insetX = 10;
+  const insetY = 10;
+  const availableWidth = Math.max(40, rect.width - insetX * 2);
+  const availableHeight = Math.max(60, rect.height - insetY * 2);
+  const isLandscape = rect.width >= rect.height;
+  const baseWidth = isLandscape ? availableWidth * 0.56 : availableWidth * 0.8;
+  const baseHeight = isLandscape ? availableHeight * 0.8 : availableHeight * 0.9;
+  const bottomWidth = Math.max(40, Math.min(availableWidth, baseWidth));
+  const topWidth = Math.max(30, bottomWidth * 0.94);
+  const trapHeight = Math.max(60, Math.min(availableHeight, baseHeight));
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  const topY = centerY - trapHeight / 2;
+  const bottomY = centerY + trapHeight / 2;
   return [
-    { x: rect.left + insetX, y: rect.top + insetY },
-    { x: rect.left + rect.width - insetX, y: rect.top + insetY },
-    { x: rect.left + rect.width - insetX, y: rect.top + rect.height - insetY },
-    { x: rect.left + insetX, y: rect.top + rect.height - insetY }
+    { x: centerX - topWidth / 2, y: topY },
+    { x: centerX + topWidth / 2, y: topY },
+    { x: centerX + bottomWidth / 2, y: bottomY },
+    { x: centerX - bottomWidth / 2, y: bottomY }
   ];
 }
 
@@ -963,6 +1081,8 @@ type DashboardImageEditorModalProps = {
   onConfirm: (file: File) => void;
 };
 
+type EditorStep = "rotate" | "trapez" | "preview";
+
 function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImageEditorModalProps) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -980,7 +1100,7 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
   const [previewFile, setPreviewFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const previewUrlRef = useRef("");
-  const [previewMode, setPreviewMode] = useState(false);
+  const [editorStep, setEditorStep] = useState<EditorStep>("rotate");
   const [error, setError] = useState("");
   const loadedRef = useRef(false);
 
@@ -1013,7 +1133,7 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
       }
       setPreviewUrl("");
       setPreviewFile(null);
-      setPreviewMode(false);
+      setEditorStep("rotate");
       setImageUrl(url);
       setImageSize({ x: image.naturalWidth, y: image.naturalHeight });
       setRotation(0);
@@ -1241,7 +1361,39 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
     const url = URL.createObjectURL(edited);
     setPreviewFile(edited);
     setPreviewUrl(url);
-    setPreviewMode(true);
+    setEditorStep("preview");
+  }
+
+  const stepTitle =
+    editorStep === "rotate"
+      ? t.dashboard.editorStepRotate
+      : editorStep === "trapez"
+        ? t.dashboard.editorStepTrapez
+        : t.dashboard.editorStepPreview;
+  const stepDescription =
+    editorStep === "rotate"
+      ? t.dashboard.editorDescRotate
+      : editorStep === "trapez"
+        ? t.dashboard.editorDescTrapez
+        : t.dashboard.editorDescPreview;
+
+  function handlePrimaryStep(): void {
+    if (editorStep === "rotate") {
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      const defaults = defaultEditorPoints(stageSize, imageSize);
+      const localDefaults = defaults.map((p) => stageToLocalPoint(p, stageSize, { x: 0, y: 0 }, 0));
+      setPoints(localDefaults);
+      setEditorStep("trapez");
+      return;
+    }
+    if (editorStep === "trapez") {
+      void confirmCrop();
+      return;
+    }
+    if (previewFile) {
+      onConfirm(previewFile);
+    }
   }
 
   return (
@@ -1249,34 +1401,24 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
       <div className="popup-card smart-editor-modal" role="dialog" aria-modal="true" aria-label="Bildkorrektur-Editor">
         <div className="smart-editor-header">
           <div>
-            <h3>Bild korrigieren</h3>
-            <p>Verschieben Sie die Ecken auf die Dokumentränder. Mit OK wird das korrigierte Bild verarbeitet.</p>
+            <h3>{t.dashboard.editorTitle}</h3>
+            <p><strong>{stepTitle}</strong> · {stepDescription}</p>
           </div>
           <div className="smart-editor-header-actions">
             <button type="button" className="btn btn-outline btn-sm" onClick={onCancel}>
-              Abbrechen
+              {t.common.cancel}
             </button>
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={() => {
-                if (previewMode && previewFile) {
-                  onConfirm(previewFile);
-                  return;
-                }
-                void confirmCrop();
-              }}
-            >
-              OK
+            <button type="button" className="btn btn-primary btn-sm" onClick={handlePrimaryStep}>
+              {editorStep === "preview" ? t.common.ok : t.dashboard.editorNext}
             </button>
           </div>
         </div>
 
         <div className="smart-editor-stage" ref={stageRef}>
-          {previewMode && previewUrl ? (
+          {editorStep === "preview" && previewUrl ? (
             <img
               src={previewUrl}
-              alt="Korrigierte Vorschau"
+              alt={t.dashboard.editorPreviewAlt}
               style={{
                 left: "50%",
                 top: "50%",
@@ -1292,7 +1434,7 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
             <>
               <img
                 src={imageUrl}
-                alt="Zu korrigierender Upload"
+                alt={t.dashboard.editorUploadAlt}
                 style={{
                   left: "50%",
                   top: "50%",
@@ -1304,43 +1446,55 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
                 onPointerDown={startPan}
                 draggable={false}
               />
-              <svg className="smart-editor-overlay-lines" viewBox={`0 0 ${stageSize.x} ${stageSize.y}`} aria-hidden="true">
-                <polygon points={polygon} />
-                {pointsStage.map((point, index) => (
-                  <circle key={index} cx={point.x} cy={point.y} r="8" />
-                ))}
-                <line x1={center.x} y1={center.y} x2={rotateHandle.x} y2={rotateHandle.y} className="smart-editor-rotate-line" />
-              </svg>
-              <button
-                type="button"
-                className="smart-editor-rotate-handle"
-                style={{ left: rotateHandle.x, top: rotateHandle.y }}
-                onPointerDown={startRotate}
-                title="Frei drehen"
-              />
-              {pointsStage.map((point, index) => (
-                <button
-                  key={index}
-                  type="button"
-                  className="smart-editor-point"
-                  style={{ left: point.x, top: point.y }}
-                  onPointerDown={(event) => startDrag(index, event)}
-                  title={`Kose ${index + 1}`}
-                />
-              ))}
+              {editorStep === "rotate" ? (
+                <>
+                  <div className="smart-editor-center-guide" />
+                  <div className="smart-editor-rotate-badge" aria-hidden="true">↻</div>
+                  <svg className="smart-editor-overlay-lines" viewBox={`0 0 ${stageSize.x} ${stageSize.y}`} aria-hidden="true">
+                    <line x1={center.x} y1={center.y} x2={rotateHandle.x} y2={rotateHandle.y} className="smart-editor-rotate-line" />
+                  </svg>
+                  <button
+                    type="button"
+                    className="smart-editor-rotate-handle"
+                    style={{ left: rotateHandle.x, top: rotateHandle.y }}
+                    onPointerDown={startRotate}
+                    title={t.dashboard.editorRotateTitle}
+                  />
+                </>
+              ) : null}
+              {editorStep === "trapez" ? (
+                <>
+                  <svg className="smart-editor-overlay-lines" viewBox={`0 0 ${stageSize.x} ${stageSize.y}`} aria-hidden="true">
+                    <polygon points={polygon} />
+                    {pointsStage.map((point, index) => (
+                      <circle key={index} cx={point.x} cy={point.y} r="8" />
+                    ))}
+                  </svg>
+                  {pointsStage.map((point, index) => (
+                    <button
+                      key={index}
+                      type="button"
+                      className="smart-editor-point"
+                      style={{ left: point.x, top: point.y }}
+                      onPointerDown={(event) => startDrag(index, event)}
+                      title={txt(t.dashboard.editorCornerTitle, { index: String(index + 1) })}
+                    />
+                  ))}
+                </>
+              ) : null}
             </>
           ) : (
-            <span>Bild wird geladen...</span>
+            <span>{t.dashboard.editorLoading}</span>
           )}
         </div>
 
         {error ? <div className="alert alert-error">{error}</div> : null}
-        {!previewMode ? <div className="smart-editor-tools">
+        {editorStep !== "preview" ? <div className="smart-editor-tools">
           <button
             type="button"
             className="smart-editor-icon-btn"
             onClick={() => setZoom((v) => Math.min(3, Number((v + 0.15).toFixed(2))))}
-            title="Zoom +"
+            title={t.dashboard.editorZoomIn}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
@@ -1351,7 +1505,7 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
             type="button"
             className="smart-editor-icon-btn"
             onClick={() => setZoom((v) => Math.max(0.5, Number((v - 0.15).toFixed(2))))}
-            title="Zoom -"
+            title={t.dashboard.editorZoomOut}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
@@ -1362,7 +1516,7 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
             SW
           </button>
           <div className="smart-editor-slider">
-            <label htmlFor="editorBrightness">Helligkeit</label>
+            <label htmlFor="editorBrightness">{t.dashboard.editorBrightness}</label>
             <input
               id="editorBrightness"
               type="range"
@@ -1373,7 +1527,7 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
             />
           </div>
           <div className="smart-editor-slider">
-            <label htmlFor="editorContrast">Kontrast</label>
+            <label htmlFor="editorContrast">{t.dashboard.editorContrast}</label>
             <input
               id="editorContrast"
               type="range"
@@ -1397,24 +1551,28 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
               setPoints(defaults.map((p) => stageToLocalPoint(p, stageSize, { x: 0, y: 0 }, 0)));
             }}
           >
-            Zurücksetzen
+            {t.dashboard.editorReset}
           </button>
         </div> : null}
         <div className="smart-editor-actions">
-          {previewMode ? (
+          {editorStep !== "rotate" ? (
             <button
               type="button"
               className="btn btn-outline"
               onClick={() => {
-                setPreviewMode(false);
+                if (editorStep === "preview") {
+                  setEditorStep("trapez");
+                  return;
+                }
+                setEditorStep("rotate");
               }}
             >
-              Zurück
+              {t.dashboard.editorBack}
             </button>
           ) : null}
           {error ? (
             <button type="button" className="btn btn-outline" onClick={() => onConfirm(file)}>
-              Original verwenden
+              {t.dashboard.editorUseOriginal}
             </button>
           ) : null}
         </div>

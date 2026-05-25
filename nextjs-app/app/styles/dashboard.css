@@ -1147,21 +1147,58 @@
 
 .smart-editor-overlay-lines polygon {
   fill: rgba(99, 102, 241, .08);
-  stroke: #16a34a;
-  stroke-width: 3;
+  stroke: #39ff14;
+  stroke-width: 2;
+  stroke-dasharray: 9 7;
   stroke-linejoin: round;
+  filter: drop-shadow(0 0 2px rgba(57, 255, 20, 0.9));
 }
 
 .smart-editor-overlay-lines circle {
   fill: #fff;
-  stroke: #16a34a;
-  stroke-width: 3;
+  stroke: #39ff14;
+  stroke-width: 2;
+  filter: drop-shadow(0 0 2px rgba(57, 255, 20, 0.8));
 }
 
 .smart-editor-rotate-line {
   stroke: #16a34a;
   stroke-width: 3;
   stroke-linecap: round;
+}
+
+.smart-editor-center-guide {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(37, 99, 235, 0.85) 0 8px,
+    rgba(37, 99, 235, 0.15) 8px 16px
+  );
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.smart-editor-rotate-badge {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(37, 99, 235, 0.15);
+  color: #1d4ed8;
+  font-weight: 700;
+  border: 1px solid rgba(37, 99, 235, 0.35);
+  pointer-events: none;
 }
 
 .smart-editor-point {
@@ -1555,6 +1592,61 @@
     grid-template-columns: 1fr;
   }
 }
+
+.duplicate-popup {
+  max-width: 860px;
+  width: min(92vw, 860px);
+  text-align: left;
+}
+
+.duplicate-grid {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.duplicate-preview {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 8px;
+  min-height: 280px;
+}
+
+.duplicate-doc {
+  width: 100%;
+  height: 300px;
+  border: 0;
+  border-radius: 8px;
+  object-fit: contain;
+  background: #fff;
+}
+
+.duplicate-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: #334155;
+  font-size: 0.95rem;
+}
+
+.duplicate-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 860px) {
+  .duplicate-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .duplicate-doc {
+    height: 240px;
+  }
+}
+
 .search-page {
   padding: 8px 0 18px;
 }
@@ -1765,6 +1857,17 @@
   gap: 10px;
   color: #334155;
   font-size: 0.95rem;
+}
+
+.search-tax-lines {
+  display: flex;
+  flex-direction: column;
+  row-gap: 4px;
+}
+
+.search-tax-lines span {
+  display: block;
+  padding-left: 18px;
 }
 
 .search-view-description p {

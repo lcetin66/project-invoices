@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { requireRouteSession } from "@/lib/auth";
 import { ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES } from "@/lib/constants";
-import { classifyWithPython } from "@/lib/python-api";
-import { getAiSettings, insertInvoice, listCategories, listInvoices } from "@/lib/repository";
+import { classifyWithPython, ClassifierApiError, type ClassifierResponse } from "@/lib/python-api";
+import { findDuplicateInvoice, getAiSettings, insertInvoice, listCategories, listInvoices } from "@/lib/repository";
 import { ensureUploadDir, sanitizeFilename } from "@/lib/utils";
 import { t } from "@/lang";
 
@@ -36,6 +37,14 @@ function plausibleInvoiceDate(input: string | null): string | null {
 
 function safeString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeBaseStem(fileName: string): string {
+  const base = path.basename(String(fileName || ""));
+  const withoutUuid = base.replace(/^[0-9a-f]{32}_/i, "");
+  const withoutEditor = withoutUuid.replace(/^editor-/i, "");
+  const stem = withoutEditor.replace(/\.[^.]+$/, "");
+  return stem.toLowerCase().trim();
 }
 
 function parseLocaleNumber(value: unknown): number | null {
@@ -181,6 +190,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     await requireRouteSession(request);
+    const checkDuplicateOnly = new URL(request.url).searchParams.get("check_duplicate") === "1";
 
     const form = await request.formData();
     const fileEntry = form.get("file") ?? form.get("rechnung_datei");
@@ -201,8 +211,101 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ ok: false, message: t.api.fileTooLarge }, { status: 400 });
     }
 
+    // Exact duplicate guard before AI call: same binary => immediate duplicate warning.
+    const incomingBuffer = Buffer.from(await file.arrayBuffer());
+    const incomingSize = incomingBuffer.byteLength;
+    const incomingHash = createHash("sha256").update(incomingBuffer).digest("hex");
+    const incomingStem = normalizeBaseStem(file.name);
+    const uploadDirForDuplicate = await ensureUploadDir();
+    const existingInvoicesForDuplicate = await listInvoices();
+
+    for (const existing of existingInvoicesForDuplicate) {
+      const existingName = sanitizeFilename(String(existing.dateiname || ""));
+      if (!existingName) continue;
+      const existingStem = normalizeBaseStem(existingName);
+      if (incomingStem && existingStem && incomingStem === existingStem) {
+        return NextResponse.json(
+          {
+            ok: false,
+            duplicate: true,
+            message: t.api.duplicateInvoiceProcessed,
+            previousInvoice: {
+              id: existing.id,
+              dateiname: existing.dateiname,
+              dateityp: existing.dateityp,
+              lieferant: existing.lieferant,
+              brutto_betrag: existing.brutto_betrag,
+              rechnungsdatum: existing.rechnungsdatum
+            },
+            duplicate_meta: { reason: "name_stem_match", incoming_stem: incomingStem, existing_stem: existingStem }
+          },
+          { status: 409 }
+        );
+      }
+      const existingPath = path.join(uploadDirForDuplicate, existingName);
+      if (!fs.existsSync(existingPath)) continue;
+      try {
+        const stat = await fsp.stat(existingPath);
+        if (stat.size !== incomingSize) continue;
+        const existingBytes = await fsp.readFile(existingPath);
+        const existingHash = createHash("sha256").update(existingBytes).digest("hex");
+        if (existingHash !== incomingHash) continue;
+        return NextResponse.json(
+          {
+            ok: false,
+            duplicate: true,
+            message: t.api.duplicateInvoiceProcessed,
+            previousInvoice: {
+              id: existing.id,
+              dateiname: existing.dateiname,
+              dateityp: existing.dateityp,
+              lieferant: existing.lieferant,
+              brutto_betrag: existing.brutto_betrag,
+              rechnungsdatum: existing.rechnungsdatum
+            }
+          },
+          { status: 409 }
+        );
+      } catch {
+        // Ignore unreadable files and continue duplicate scan.
+      }
+    }
+
+    if (checkDuplicateOnly) {
+      return NextResponse.json({ ok: true, duplicate: false });
+    }
+
     const ai = await getAiSettings();
-    const classifier = await classifyWithPython(file, ai);
+    let classifier: ClassifierResponse;
+    try {
+      classifier = await classifyWithPython(file, ai);
+    } catch (error) {
+      if (error instanceof ClassifierApiError && error.status === 409) {
+        const duplicate = Boolean(error.payload.duplicate);
+        const duplicateMeta = (error.payload.duplicate_meta ?? {}) as Record<string, unknown>;
+        if (duplicate) {
+          const matchedName = String(duplicateMeta.matched_file ?? "");
+          const isPdf = matchedName.toLowerCase().endsWith(".pdf");
+          return NextResponse.json(
+            {
+              ok: false,
+              duplicate: true,
+              message: t.api.duplicateInvoiceProcessed,
+              previousInvoice: {
+                dateiname: matchedName,
+                dateityp: isPdf ? "application/pdf" : "image/*",
+                lieferant: t.common.unknown,
+                brutto_betrag: null,
+                rechnungsdatum: null
+              },
+              duplicate_meta: duplicateMeta
+            },
+            { status: 409 }
+          );
+        }
+      }
+      throw error;
+    }
     const result = classifier.ergebnis;
 
     const supplier = safeString(result.lieferant ?? result.vendor);
@@ -266,6 +369,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const dueDateRaw = String(form.get("faelligkeitsdatum") ?? "").trim();
     const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(dueDateRaw) ? dueDateRaw : null;
+    const forceDuplicate = String(form.get("force_duplicate") ?? "").trim().toLowerCase() === "1";
     const manualDescription = safeString(form.get("beschreibung"));
     const taxDetails = normalizeTaxDetails(result.steuerdetails);
     const taxLines = parseTaxDetailsLines(taxDetails);
@@ -309,18 +413,51 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .filter(Boolean)
       .join("\n\n") || null;
 
+    if (!forceDuplicate) {
+      const duplicate = await findDuplicateInvoice({
+        lieferant: supplier,
+        bruttoBetrag: grossAmount,
+        rechnungsdatum: invoiceDate
+      });
+      if (duplicate) {
+        const duplicateName = sanitizeFilename(String(classifier.datei_name || file.name));
+        const duplicatePath = path.join(await ensureUploadDir(), duplicateName);
+        try {
+          await fsp.unlink(duplicatePath);
+        } catch {
+          // Best effort cleanup for duplicate uploads.
+        }
+        return NextResponse.json(
+          {
+            ok: false,
+            duplicate: true,
+            message: t.api.duplicateInvoiceProcessed,
+            previousInvoice: {
+              id: duplicate.id,
+              dateiname: duplicate.dateiname,
+              dateityp: duplicate.dateityp,
+              lieferant: duplicate.lieferant,
+              brutto_betrag: duplicate.brutto_betrag,
+              rechnungsdatum: duplicate.rechnungsdatum
+            }
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     const safeApiFilename = sanitizeFilename(String(classifier.datei_name || file.name));
     const uploadDir = await ensureUploadDir();
     const filePath = path.join(uploadDir, safeApiFilename);
 
     // Keep Python-cropped file if it already exists; create local copy only when missing.
     if (!fs.existsSync(filePath)) {
-      const buffer = Buffer.from(await file.arrayBuffer());
-      await fsp.writeFile(filePath, buffer);
+      await fsp.writeFile(filePath, incomingBuffer);
     }
 
     const invoiceId = await insertInvoice({
       dateiname: safeApiFilename,
+      originalDateiname: sanitizeFilename(file.name),
       dateityp: file.type || "application/octet-stream",
       rechnungTyp: finalInvoiceType,
       rechnungsdatum: invoiceDate,

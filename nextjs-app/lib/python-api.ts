@@ -21,6 +21,18 @@ export interface ClassifierResponse {
   };
 }
 
+export class ClassifierApiError extends Error {
+  status: number;
+  payload: Record<string, unknown>;
+
+  constructor(message: string, status: number, payload: Record<string, unknown>) {
+    super(message);
+    this.name = "ClassifierApiError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
 export function normalizeModel(model: string | null | undefined, provider: string | null | undefined): string {
   const raw = String(model ?? "").trim();
   const p = String(provider ?? "openrouter").trim().toLowerCase();
@@ -43,11 +55,12 @@ export async function classifyWithPython(file: File, ai: AiSettings): Promise<Cl
     cache: "no-store"
   });
 
-  if (!response.ok) {
-    throw new Error(`Classifier API error (${response.status})`);
-  }
+  const data = (await response.json()) as Partial<ClassifierResponse> & Record<string, unknown>;
 
-  const data = (await response.json()) as Partial<ClassifierResponse>;
+  if (!response.ok) {
+    const message = String(data.message ?? `Classifier API error (${response.status})`);
+    throw new ClassifierApiError(message, response.status, data);
+  }
   if (!data.erfolgreich || !data.datei_name || !data.ergebnis) {
     throw new Error("Classifier API returned incomplete payload");
   }
