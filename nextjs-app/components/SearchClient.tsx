@@ -246,17 +246,28 @@ export function SearchClient() {
                   <>
                     <div className="search-tax-lines">
                       <strong>{t.invoices.net}:</strong>
-                      {selectedTaxLines.map((line, index) => (
-                        <span key={`${line.rate}-${line.netto}-${index}`}>{line.rate}%: {formatTaxValue(line.netto)} {selectedInvoice.waehrung || "EUR"}</span>
-                      ))}
+                      <div>
+                        {selectedTaxLines.map((line, index) => (
+                          <span key={`${line.rate}-${line.netto}-${index}`}>{line.rate}%: {formatTaxValue(line.netto)} {selectedInvoice.waehrung || "EUR"}</span>
+                        ))}
+                      </div>
                     </div>
                     <div className="search-tax-lines">
                       <strong>{t.invoices.vatAmount}:</strong>
-                      {selectedTaxLines.map((line, index) => (
-                        <span key={`${line.rate}-${line.tax}-${index}`}>{line.rate}%: {formatTaxValue(line.tax)} {selectedInvoice.waehrung || "EUR"}</span>
-                      ))}
+                      <div>
+                        {selectedTaxLines.map((line, index) => (
+                          <span key={`${line.rate}-${line.tax}-${index}`}>{line.rate}%: {formatTaxValue(line.tax)} {selectedInvoice.waehrung || "EUR"}</span>
+                        ))}
+                      </div>
                     </div>
-                    <div><strong>{t.invoices.vatRate}:</strong> {selectedTaxLines.map((line) => `${line.rate}%`).join(", ")}</div>
+                    <div className="search-tax-lines">
+                      <strong>{t.invoices.vatRate}:</strong>
+                      <div>
+                        {selectedTaxLines.map((line, index) => (
+                          <span key={`${line.rate}-${index}`}>{line.rate}%</span>
+                        ))}
+                      </div>
+                    </div>
                   </>
                 ) : (
                   <>
