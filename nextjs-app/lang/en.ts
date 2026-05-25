@@ -9,6 +9,7 @@ export const en = {
   nav: {
     dashboard: "Dashboard",
     input: "Input",
+    search: "Search",
     admin: "Administration",
     invoices: "Invoices",
     user: "User"
@@ -239,6 +240,15 @@ export const en = {
     deactivated: "Category deactivated.",
     deleted: "Category deleted.",
     budgetSaved: "Budget saved."
+  },
+  search: {
+    label: "Search invoices",
+    placeholder: "Supplier, amount, date, category, file or original image name...",
+    startHint: "Start typing to see matching results.",
+    resultCount: "{count} results",
+    empty: "No matching invoices found.",
+    originalImageName: "Original image name",
+    savedFileName: "Saved file name"
   },
   stats: {
     fallbackInsights: [

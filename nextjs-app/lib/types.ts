@@ -16,6 +16,7 @@ export interface Category {
 export interface Invoice {
   id: number;
   dateiname: string;
+  original_dateiname: string | null;
   dateipfad: string;
   dateityp: string;
   rechnung_typ: InvoiceType;

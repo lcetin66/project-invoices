@@ -179,6 +179,7 @@ function mapInvoice(row: RowDataPacket): Invoice {
   return {
     id: Number(row.id),
     dateiname: String(row.dateiname ?? ""),
+    original_dateiname: row.original_dateiname == null ? null : String(row.original_dateiname),
     dateipfad: String(row.dateipfad ?? ""),
     dateityp: String(row.dateityp ?? ""),
     rechnung_typ: row.rechnung_typ === "ausgang" ? "ausgang" : "eingang",
@@ -203,6 +204,7 @@ function mapInvoice(row: RowDataPacket): Invoice {
 export async function listInvoices(filters?: {
   typ?: "eingang" | "ausgang";
   category?: string;
+  search?: string;
   limit?: number;
 }): Promise<Invoice[]> {
   const where: string[] = [];
@@ -215,6 +217,26 @@ export async function listInvoices(filters?: {
   if (filters?.category) {
     where.push("r.kategorie_name = ?");
     params.push(filters.category);
+  }
+  if (filters?.search?.trim()) {
+    where.push(`
+      LOWER(CONCAT_WS(' ',
+        COALESCE(r.dateiname, ''),
+        COALESCE(r.original_dateiname, ''),
+        COALESCE(r.beschreibung, ''),
+        COALESCE(r.lieferant, ''),
+        COALESCE(r.kategorie_name, ''),
+        COALESCE(r.netto_betrag, ''),
+        COALESCE(r.mwst_betrag, ''),
+        COALESCE(r.brutto_betrag, ''),
+        COALESCE(r.waehrung, ''),
+        COALESCE(r.rechnungsdatum, ''),
+        COALESCE(r.faelligkeitsdatum, ''),
+        COALESCE(r.hochladezeit, ''),
+        COALESCE(r.aktualisierungszeit, '')
+      )) LIKE ?
+    `);
+    params.push(`%${filters.search.trim().toLowerCase()}%`);
   }
 
   let sql = `

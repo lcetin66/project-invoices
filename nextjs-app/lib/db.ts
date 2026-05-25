@@ -39,6 +39,11 @@ async function ensureSchemaInternal(): Promise<void> {
   if (columns.length === 0) {
     await pool.query("ALTER TABLE rechnungen ADD COLUMN rechnungsdatum DATE NULL AFTER rechnung_typ");
   }
+
+  const [originalNameColumns] = await pool.query<RowDataPacket[]>("SHOW COLUMNS FROM rechnungen LIKE 'original_dateiname'");
+  if (originalNameColumns.length === 0) {
+    await pool.query("ALTER TABLE rechnungen ADD COLUMN original_dateiname VARCHAR(255) NULL AFTER dateiname");
+  }
 }
 
 export async function ensureSchema(): Promise<void> {

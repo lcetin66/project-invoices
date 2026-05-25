@@ -1555,3 +1555,243 @@
     grid-template-columns: 1fr;
   }
 }
+.search-page {
+  padding: 8px 0 18px;
+}
+
+.search-sticky-wrap {
+  position: sticky;
+  top: 76px;
+  z-index: 12;
+  padding: 6px 0 12px;
+  background: linear-gradient(180deg, rgba(248,250,252,0.95) 0%, rgba(248,250,252,0.92) 70%, rgba(248,250,252,0) 100%);
+  backdrop-filter: blur(2px);
+}
+
+.search-hero {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0 12px;
+}
+
+.search-hero-input {
+  width: 100%;
+  height: 58px;
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
+  background: #eef3fa;
+  box-shadow:
+    inset 8px 8px 18px rgba(206, 216, 232, 0.75),
+    inset -8px -8px 16px rgba(255, 255, 255, 0.92),
+    0 10px 24px rgba(15, 23, 42, 0.08);
+  color: #1e293b;
+  font-size: 1rem;
+  font-weight: 600;
+  outline: none;
+  padding: 0 24px;
+}
+
+.search-hero-input:focus {
+  border-color: #8ea2ff;
+  box-shadow:
+    inset 8px 8px 18px rgba(206, 216, 232, 0.75),
+    inset -8px -8px 16px rgba(255, 255, 255, 0.92),
+    0 0 0 4px rgba(99, 102, 241, 0.14);
+}
+
+.search-results {
+  margin-top: 10px;
+}
+
+.search-page .rechnungen-grid {
+  gap: 12px;
+}
+
+.search-page .rechnung-row {
+  align-items: stretch;
+  padding: 14px;
+}
+
+.search-page .thumb-preview-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.search-page .thumb-btn {
+  width: 112px;
+  height: 168px;
+  border-radius: 14px;
+}
+
+.search-page .rechnung-thumb,
+.search-page .pdf-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 12px;
+}
+
+.search-hover-preview {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 0;
+  width: 280px;
+  height: 380px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid #d8deea;
+  box-shadow: 0 16px 30px rgba(15, 23, 42, 0.18);
+  overflow: hidden;
+  z-index: 18;
+}
+
+.search-hover-preview-doc {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  object-fit: contain;
+  display: block;
+  background: #fff;
+}
+
+.search-mark {
+  background: #d1fe01;
+  color: inherit;
+  padding: 0 2px;
+}
+
+.search-inline-view {
+  width: min(1260px, calc(100% - 24px));
+  margin: 4px auto 16px;
+  background: #fff;
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.1);
+  overflow: hidden;
+}
+
+.search-view-layout {
+  display: grid;
+  grid-template-columns: minmax(560px, 58%) minmax(0, 1fr);
+  width: 100%;
+  gap: 14px;
+  padding: 14px;
+}
+
+.search-floating-preview {
+  height: clamp(460px, 62vh, 760px);
+}
+
+.search-preview-toolbar {
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.search-preview-toolbar .zoom-btn {
+  color: #475569;
+}
+
+.search-preview-toolbar .zoom-btn:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.search-zoom-value {
+  color: #64748b;
+  font-size: 0.86rem;
+  font-weight: 700;
+  min-width: 48px;
+}
+
+.search-inline-close {
+  margin-left: auto;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: #64748b;
+  cursor: pointer;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.search-float-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: #f8fafc;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 18px;
+}
+
+.search-float-doc {
+  display: block;
+  max-width: none;
+  border: 0;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+}
+
+.search-float-image {
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.search-float-pdf {
+  width: 100%;
+  min-width: 780px;
+  height: calc(100% + 220px);
+  min-height: 760px;
+}
+
+.search-view-details {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.search-view-details h3 {
+  margin: 0 0 10px;
+}
+
+.search-view-grid {
+  display: grid;
+  gap: 10px;
+  color: #334155;
+  font-size: 0.95rem;
+}
+
+.search-view-description p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 1040px) {
+  .search-hover-preview {
+    display: none;
+  }
+
+  .search-view-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .search-floating-preview {
+    height: clamp(380px, 58vh, 620px);
+  }
+
+  .search-float-pdf {
+    min-width: 680px;
+  }
+
+  .search-page .thumb-btn {
+    width: 92px;
+    height: 132px;
+  }
+}
