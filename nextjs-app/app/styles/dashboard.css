@@ -1635,6 +1635,8 @@
   margin-top: 16px;
   display: flex;
   justify-content: flex-end;
+  gap: 12px;
+  align-items: center;
 }
 
 @media (max-width: 860px) {
@@ -1799,13 +1801,18 @@
   margin-left: auto;
   width: 34px;
   height: 34px;
-  border: 1px solid var(--border);
+  border: 1px solid #dc2626;
   border-radius: 8px;
-  background: #fff;
-  color: #64748b;
+  background: #dc2626;
+  color: #ffffff;
   cursor: pointer;
   font-weight: 800;
   line-height: 1;
+}
+
+.search-inline-close:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
 }
 
 .search-float-stage {

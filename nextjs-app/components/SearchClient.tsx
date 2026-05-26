@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import type { MouseEvent } from "react";
 import type { Invoice } from "@/lib/types";
 import { t } from "@/lang";
 
@@ -92,6 +93,9 @@ export function SearchClient() {
   const [hoverPreviewId, setHoverPreviewId] = useState<number | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [zoomLevel, setZoomLevel] = useState(100);
+  const [viewPan, setViewPan] = useState({ x: 0, y: 0 });
+  const [viewDragging, setViewDragging] = useState(false);
+  const viewDragStart = useRef<{ mouseX: number; mouseY: number; panX: number; panY: number } | null>(null);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -152,11 +156,33 @@ export function SearchClient() {
   function openDetails(invoice: Invoice): void {
     setSelectedInvoice(invoice);
     setZoomLevel(100);
+    setViewPan({ x: 0, y: 0 });
+    setViewDragging(false);
   }
 
   function closeDetails(): void {
     setSelectedInvoice(null);
     setZoomLevel(100);
+    setViewPan({ x: 0, y: 0 });
+    setViewDragging(false);
+  }
+
+  function handleViewDragStart(e: MouseEvent<HTMLDivElement>): void {
+    e.preventDefault();
+    viewDragStart.current = { mouseX: e.clientX, mouseY: e.clientY, panX: viewPan.x, panY: viewPan.y };
+    setViewDragging(true);
+  }
+
+  function handleViewDragMove(e: MouseEvent<HTMLDivElement>): void {
+    if (!viewDragging || !viewDragStart.current) return;
+    const dx = e.clientX - viewDragStart.current.mouseX;
+    const dy = e.clientY - viewDragStart.current.mouseY;
+    setViewPan({ x: viewDragStart.current.panX + dx, y: viewDragStart.current.panY + dy });
+  }
+
+  function handleViewDragEnd(): void {
+    setViewDragging(false);
+    viewDragStart.current = null;
   }
 
   return (
@@ -183,41 +209,61 @@ export function SearchClient() {
                 <button
                   type="button"
                   className="zoom-btn"
-                  onClick={() => setZoomLevel((z) => Math.max(80, z - 20))}
+                  onClick={() => { setZoomLevel((z) => Math.max(60, z - 20)); setViewPan({ x: 0, y: 0 }); }}
                   title={t.invoices.zoomReset}
                   aria-label="Zoom out"
+                  disabled={zoomLevel <= 60}
                 >
                   <ZoomOutIcon />
                 </button>
                 <button
                   type="button"
                   className="zoom-btn"
-                  onClick={() => setZoomLevel(100)}
+                  onClick={() => { setZoomLevel(100); setViewPan({ x: 0, y: 0 }); }}
                   title={t.invoices.zoomReset}
                   aria-label={t.invoices.zoomReset}
+                  disabled={zoomLevel === 100}
                 >
                   <ResetZoomIcon />
                 </button>
                 <button
                   type="button"
                   className="zoom-btn"
-                  onClick={() => setZoomLevel((z) => Math.min(240, z + 20))}
+                  onClick={() => setZoomLevel((z) => Math.min(400, z + 20))}
                   title={t.invoices.zoomIn}
                   aria-label={t.invoices.zoomIn}
+                  disabled={zoomLevel >= 400}
                 >
                   <ZoomInIcon />
                 </button>
                 <span className="search-zoom-value">{zoomLevel}%</span>
+                <span style={{ fontSize: "0.72rem", color: "#94a3b8", marginLeft: 6 }}>drag to pan</span>
                 <button type="button" className="search-inline-close" onClick={closeDetails} aria-label={t.common.close}>
-                  x
+                  X
                 </button>
               </div>
-              <div className="search-float-stage">
+              <div
+                className="search-float-stage view-pan-stage"
+                style={{
+                  overflow: "hidden",
+                  cursor: viewDragging ? "grabbing" : "grab"
+                }}
+                onMouseDown={handleViewDragStart}
+                onMouseMove={handleViewDragMove}
+                onMouseUp={handleViewDragEnd}
+                onMouseLeave={handleViewDragEnd}
+              >
                 {(selectedInvoice.dateiname || "").toLowerCase().endsWith(".pdf") || String(selectedInvoice.dateityp || "").toLowerCase().includes("pdf") ? (
                   <object
                     data={`/api/uploads/${encodeURIComponent(selectedInvoice.dateiname)}#page=1&view=FitH&zoom=${zoomLevel}`}
                     type="application/pdf"
                     className="search-float-doc search-float-pdf"
+                    style={{
+                      transform: `translate(${viewPan.x}px, ${viewPan.y}px) scale(${zoomLevel / 100})`,
+                      transformOrigin: "center top",
+                      transition: viewDragging ? "none" : "transform 0.15s ease",
+                      pointerEvents: zoomLevel > 100 ? "none" : "auto"
+                    }}
                   >
                     <span className="thumb-pdf">{t.common.pdf}</span>
                   </object>
@@ -226,7 +272,16 @@ export function SearchClient() {
                     src={`/api/uploads/${encodeURIComponent(selectedInvoice.dateiname)}`}
                     className="search-float-doc search-float-image"
                     alt={t.invoices.previewOpen}
-                    style={{ width: `${zoomLevel}%` }}
+                    draggable={false}
+                    style={{
+                      transform: `translate(${viewPan.x}px, ${viewPan.y}px) scale(${zoomLevel / 100})`,
+                      transformOrigin: "center top",
+                      transition: viewDragging ? "none" : "transform 0.15s ease",
+                      userSelect: "none",
+                      pointerEvents: "none",
+                      width: "100%",
+                      height: "auto"
+                    }}
                   />
                 )}
               </div>

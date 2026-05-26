@@ -243,10 +243,22 @@ export function InvoicesClient() {
 
   const [preview, setPreview] = useState<{ file: string; type: string } | null>(null);
   const closePreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [editZoom, setEditZoom] = useState(false);
-  const [zoomFocus, setZoomFocus] = useState({ x: 50, y: 50 });
+  const [editZoomLevel, setEditZoomLevel] = useState(100);
+  const [editPan, setEditPan] = useState({ x: 0, y: 0 });
+  const [editDragging, setEditDragging] = useState(false);
+  const editDragStart = useRef<{ mouseX: number; mouseY: number; panX: number; panY: number } | null>(null);
 
   const [deleteModal, setDeleteModal] = useState<{ id: number; text: string } | null>(null);
+  const [showQuickCat, setShowQuickCat] = useState(false);
+  const [quickCatName, setQuickCatName] = useState("");
+  const [quickCatDesc, setQuickCatDesc] = useState("");
+  const [quickCatColor, setQuickCatColor] = useState("#6366F1");
+  const [quickCatLoading, setQuickCatLoading] = useState(false);
+  const [viewingInvoice, setViewingInvoice] = useState<Invoice | null>(null);
+  const [viewZoomLevel, setViewZoomLevel] = useState(100);
+  const [viewPan, setViewPan] = useState({ x: 0, y: 0 });
+  const [viewDragging, setViewDragging] = useState(false);
+  const viewDragStart = useRef<{ mouseX: number; mouseY: number; panX: number; panY: number } | null>(null);
 
   const loadCategories = useCallback(async (): Promise<void> => {
     const res = await fetch("/api/categories?activeOnly=1", { cache: "no-store" });
@@ -312,20 +324,74 @@ export function InvoicesClient() {
   function openEdit(invoice: Invoice): void {
     setEditingId(invoice.id);
     setEditState(toEdit(invoice));
-    setEditZoom(false);
-    setZoomFocus({ x: 50, y: 50 });
+    setEditZoomLevel(100);
+    setEditPan({ x: 0, y: 0 });
+    setEditDragging(false);
+    setStatus(null);
+    setViewingInvoice(null);
+  }
+
+  function closeEdit(): void {
+    setEditingId(null);
+    setEditState(emptyEdit);
+    setEditZoomLevel(100);
+    setEditPan({ x: 0, y: 0 });
+    setEditDragging(false);
     setStatus(null);
   }
 
-  function onZoomMove(event: MouseEvent<HTMLDivElement>): void {
-    if (!editZoom) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const rawX = ((event.clientX - rect.left) / Math.max(rect.width, 1)) * 100;
-    const rawY = ((event.clientY - rect.top) / Math.max(rect.height, 1)) * 100;
-    const x = Math.max(0, Math.min(100, rawX));
-    const y = Math.max(0, Math.min(100, rawY));
-    setZoomFocus({ x, y });
+  function handleEditDragStart(e: MouseEvent<HTMLDivElement>): void {
+    e.preventDefault();
+    editDragStart.current = { mouseX: e.clientX, mouseY: e.clientY, panX: editPan.x, panY: editPan.y };
+    setEditDragging(true);
   }
+
+  function handleEditDragMove(e: MouseEvent<HTMLDivElement>): void {
+    if (!editDragging || !editDragStart.current) return;
+    const dx = e.clientX - editDragStart.current.mouseX;
+    const dy = e.clientY - editDragStart.current.mouseY;
+    setEditPan({ x: editDragStart.current.panX + dx, y: editDragStart.current.panY + dy });
+  }
+
+  function handleEditDragEnd(): void {
+    setEditDragging(false);
+    editDragStart.current = null;
+  }
+
+  function openView(invoice: Invoice): void {
+    setViewingInvoice(invoice);
+    setViewZoomLevel(100);
+    setViewPan({ x: 0, y: 0 });
+    setViewDragging(false);
+    setStatus(null);
+    setEditingId(null);
+  }
+
+  function closeView(): void {
+    setViewingInvoice(null);
+    setViewZoomLevel(100);
+    setViewPan({ x: 0, y: 0 });
+    setViewDragging(false);
+  }
+
+  function handleViewDragStart(e: MouseEvent<HTMLDivElement>): void {
+    e.preventDefault();
+    viewDragStart.current = { mouseX: e.clientX, mouseY: e.clientY, panX: viewPan.x, panY: viewPan.y };
+    setViewDragging(true);
+  }
+
+  function handleViewDragMove(e: MouseEvent<HTMLDivElement>): void {
+    if (!viewDragging || !viewDragStart.current) return;
+    const dx = e.clientX - viewDragStart.current.mouseX;
+    const dy = e.clientY - viewDragStart.current.mouseY;
+    setViewPan({ x: viewDragStart.current.panX + dx, y: viewDragStart.current.panY + dy });
+  }
+
+  function handleViewDragEnd(): void {
+    setViewDragging(false);
+    viewDragStart.current = null;
+  }
+
 
   function openPreview(file: string, type: string): void {
     if (closePreviewTimer.current) {
@@ -379,6 +445,32 @@ export function InvoicesClient() {
     await loadInvoices();
   }
 
+  async function submitQuickCat(): Promise<void> {
+    const name = quickCatName.trim();
+    if (!name) return;
+    setQuickCatLoading(true);
+    try {
+      const res = await fetch("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, beschreibung: quickCatDesc, farbe: quickCatColor })
+      });
+      if (!res.ok) return;
+      await loadCategories();
+      // find the newly created category by name and auto-select it
+      const res2 = await fetch("/api/categories?activeOnly=1", { cache: "no-store" });
+      const data = (await res2.json()) as { categories?: Array<{ id: number; name: string }> };
+      const found = (data.categories ?? []).find((c) => c.name === name);
+      if (found) setEditState((prev) => ({ ...prev, kategorie_id: String(found.id) }));
+      setShowQuickCat(false);
+      setQuickCatName("");
+      setQuickCatDesc("");
+      setQuickCatColor("#6366F1");
+    } finally {
+      setQuickCatLoading(false);
+    }
+  }
+
   async function confirmDelete(): Promise<void> {
     if (!deleteModal) return;
     const deleteId = deleteModal.id;
@@ -414,339 +506,523 @@ export function InvoicesClient() {
 
   return (
     <>
-      {editingInvoice ? (
-        <section id="edit-panel" className="edit-panel">
-          <h2>{t.invoices.editTitle}</h2>
-          <p>{t.invoices.editIntro}</p>
-          <div className="edit-layout">
-            <div className="edit-preview">
-              <div className="edit-preview-toolbar">
+      {/* ─── VIEW PAGE ───────────────────────────────────────────────── */}
+      {viewingInvoice ? (
+        <section className="invoice-detail-page">
+          <div className="page-back-bar">
+            <button type="button" className="btn btn-outline btn-back" onClick={closeView}>
+              {t.common.backToList}
+            </button>
+          </div>
+          <div className="search-view-layout">
+            <div className="edit-preview search-floating-preview">
+              <div className="edit-preview-toolbar search-preview-toolbar">
                 <button
                   type="button"
-                  className={`zoom-btn ${editZoom ? "active" : ""}`}
-                  onClick={() => setEditZoom(true)}
-                  title={t.invoices.zoomIn}
-                  aria-label={t.invoices.zoomIn}
+                  className="zoom-btn"
+                  onClick={() => { setViewZoomLevel((z) => Math.max(60, z - 20)); setViewPan({ x: 0, y: 0 }); }}
+                  title={t.invoices.zoomReset}
+                  aria-label="Zoom out"
+                  disabled={viewZoomLevel <= 60}
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                     <circle cx="11" cy="11" r="7" />
-                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                    <line x1="11" y1="8" x2="11" y2="14" />
-                    <line x1="8" y1="11" x2="14" y2="11" />
+                    <path d="M8 11h6" />
+                    <path d="m20 20-4.2-4.2" />
                   </svg>
                 </button>
                 <button
                   type="button"
                   className="zoom-btn"
-                  onClick={() => {
-                    setEditZoom(false);
-                    setZoomFocus({ x: 50, y: 50 });
-                  }}
+                  onClick={() => { setViewZoomLevel(100); setViewPan({ x: 0, y: 0 }); }}
                   title={t.invoices.zoomReset}
                   aria-label={t.invoices.zoomReset}
-                  disabled={!editZoom}
+                  disabled={viewZoomLevel === 100}
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                     <circle cx="11" cy="11" r="7" />
-                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                    <line x1="8" y1="11" x2="14" y2="11" />
+                    <path d="M8.5 9.5h4a2 2 0 0 1 0 4h-4" />
+                    <path d="m10.5 7.5-2 2 2 2" />
+                    <path d="m20 20-4.2-4.2" />
                   </svg>
                 </button>
+                <button
+                  type="button"
+                  className="zoom-btn"
+                  onClick={() => setViewZoomLevel((z) => Math.min(400, z + 20))}
+                  title={t.invoices.zoomIn}
+                  aria-label={t.invoices.zoomIn}
+                  disabled={viewZoomLevel >= 400}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="M8 11h6" />
+                    <path d="M11 8v6" />
+                    <path d="m20 20-4.2-4.2" />
+                  </svg>
+                </button>
+                <span className="search-zoom-value">{viewZoomLevel}%</span>
+                <span style={{ fontSize: "0.72rem", color: "#94a3b8", marginLeft: 6 }}>drag to pan</span>
               </div>
               <div
-                className={`edit-doc-wrap ${editZoom ? "zoomed" : ""}`}
-                onMouseMove={onZoomMove}
-                style={
-                  editZoom
-                    ? ({
-                        ["--zoom-x" as string]: `${zoomFocus.x}%`,
-                        ["--zoom-y" as string]: `${zoomFocus.y}%`
-                      } as React.CSSProperties)
-                    : undefined
-                }
+                className="search-float-stage view-pan-stage"
+                style={{
+                  overflow: "hidden",
+                  cursor: viewDragging ? "grabbing" : "grab"
+                }}
+                onMouseDown={handleViewDragStart}
+                onMouseMove={handleViewDragMove}
+                onMouseUp={handleViewDragEnd}
+                onMouseLeave={handleViewDragEnd}
               >
-                {editingIsPdf ? (
-                  <object data={`${editingInvoiceFileUrl}#page=1&view=FitH`} type="application/pdf" className="edit-doc edit-doc-pdf" />
+                {viewingInvoice.dateiname.toLowerCase().endsWith(".pdf") || viewingInvoice.dateityp.toLowerCase().includes("pdf") ? (
+                  <object
+                    data={`/api/uploads/${encodeURIComponent(viewingInvoice.dateiname)}#page=1&view=FitH&zoom=${viewZoomLevel}`}
+                    type="application/pdf"
+                    className="search-float-doc search-float-pdf"
+                    style={{
+                      transform: `translate(${viewPan.x}px, ${viewPan.y}px) scale(${viewZoomLevel / 100})`,
+                      transformOrigin: "center top",
+                      transition: viewDragging ? "none" : "transform 0.15s ease",
+                      pointerEvents: viewZoomLevel > 100 ? "none" : "auto"
+                    }}
+                  >
+                    <span className="thumb-pdf">{t.common.pdf}</span>
+                  </object>
                 ) : (
-                  <img src={editingInvoiceFileUrl} className="edit-doc edit-doc-image" alt={t.app.name} />
+                  <img
+                    src={`/api/uploads/${encodeURIComponent(viewingInvoice.dateiname)}`}
+                    className="search-float-doc search-float-image"
+                    alt={t.invoices.previewOpen}
+                    draggable={false}
+                    style={{
+                      transform: `translate(${viewPan.x}px, ${viewPan.y}px) scale(${viewZoomLevel / 100})`,
+                      transformOrigin: "center top",
+                      transition: viewDragging ? "none" : "transform 0.15s ease",
+                      userSelect: "none",
+                      pointerEvents: "none",
+                      width: "100%",
+                      height: "auto"
+                    }}
+                  />
                 )}
               </div>
             </div>
-
-            <form method="POST" className="edit-form" onSubmit={(event) => void submitEdit(event)}>
-              <div className="edit-grid">
-                <div className="form-group">
-                  <label>{t.invoices.supplier}</label>
-                  <input value={editState.lieferant} onChange={(event) => setEditState((prev) => ({ ...prev, lieferant: event.target.value }))} />
-                </div>
-                <div className="form-group">
-                  <label>{t.invoices.category}</label>
-                  <select value={editState.kategorie_id} onChange={(event) => setEditState((prev) => ({ ...prev, kategorie_id: event.target.value }))}>
-                    <option value="0">{t.common.none}</option>
-                    {categories.map((cat) => (
-                      <option key={cat.id} value={cat.id}>{cat.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>{t.invoices.invoiceType}</label>
-                  <select value={editState.rechnung_typ} onChange={(event) => setEditState((prev) => ({ ...prev, rechnung_typ: event.target.value as "eingang" | "ausgang" }))}>
-                    <option value="eingang">{t.invoices.incoming}</option>
-                    <option value="ausgang">{t.invoices.outgoing}</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>{t.invoices.invoiceDate}</label>
-                  <input type="date" value={editState.rechnungsdatum} onChange={(event) => setEditState((prev) => ({ ...prev, rechnungsdatum: event.target.value }))} />
-                </div>
-                <div className="form-group">
-                  <label>{t.invoices.dueDate}</label>
-                  <input type="date" value={editState.faelligkeitsdatum} onChange={(event) => setEditState((prev) => ({ ...prev, faelligkeitsdatum: event.target.value }))} />
-                </div>
-                <div className="form-group">
-                  <div className="vat-guidance">
-                    <strong>{t.invoices.vatGuidanceTitle}</strong> {t.invoices.vatGuidanceText}
-                  </div>
-                </div>
-                <div className="form-group full">
-                  <div className="tax-input-grid">
-                    <div className="form-group">
-                      <label>{t.invoices.net}</label>
-                      <input type="number" step="0.01" value={editState.netto_betrag} onChange={(event) => setEditState((prev) => ({ ...prev, netto_betrag: event.target.value }))} />
-                    </div>
-                    <div className="form-group">
-                      <label>{t.invoices.vatRate}</label>
-                      <input type="number" step="0.01" value={editState.mwst_satz} onChange={(event) => setEditState((prev) => ({ ...prev, mwst_satz: event.target.value }))} />
-                    </div>
-                    <div className="form-group">
-                      <label>{t.invoices.vatAmount}</label>
-                      <input type="number" step="0.01" value={editState.mwst_betrag} onChange={(event) => setEditState((prev) => ({ ...prev, mwst_betrag: event.target.value }))} />
-                    </div>
-                  </div>
-                </div>
-                {taxLines.length > 1
-                  ? taxLines.slice(1).map((line, idx) => (
-                      <div className="form-group full" key={`${line.rate}-${line.netto}-${line.tax}-${idx}-row`}>
-                        <div className="tax-input-grid">
-                          <div className="form-group">
-                            <label>{t.invoices.net}</label>
-                            <input value={line.netto} readOnly />
-                          </div>
-                          <div className="form-group">
-                            <label>{t.invoices.vatRate}</label>
-                            <input value={line.rate} readOnly />
-                          </div>
-                          <div className="form-group">
-                            <label>{t.invoices.vatAmount}</label>
-                            <input value={line.tax} readOnly />
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  : null}
-                <div className="form-group">
-                  <label>{t.invoices.gross}</label>
-                  <input type="number" step="0.01" value={editState.brutto_betrag} onChange={(event) => setEditState((prev) => ({ ...prev, brutto_betrag: event.target.value }))} />
-                </div>
-                <div className="form-group">
-                  <label>{t.invoices.currency}</label>
-                  <input value={editState.waehrung} onChange={(event) => setEditState((prev) => ({ ...prev, waehrung: event.target.value }))} />
-                </div>
-                <div className="form-group full">
-                  <label>{t.invoices.description}</label>
-                  <div className="description-summary-box">
-                    <DescriptionSummary description={editState.beschreibung} fallbackSupplier={editState.lieferant} />
-                  </div>
+            <div className="search-view-details">
+              <h3>{t.common.view}</h3>
+              <div className="search-view-grid">
+                <div><strong>{t.invoices.invoiceDateLabel}:</strong> {viewingInvoice.rechnungsdatum || "-"}</div>
+                <div><strong>{t.invoices.receivedDateLabel}:</strong> {String(viewingInvoice.hochladezeit || "").slice(0, 19).replace("T", " ")}</div>
+                <div><strong>{t.invoices.typeHeading}:</strong> {viewingInvoice.rechnung_typ}</div>
+                <div><strong>{t.invoices.category}:</strong> {viewingInvoice.kategorie_name || t.dashboard.uncategorized}</div>
+                <div><strong>{t.invoices.supplier}:</strong> {viewingInvoice.lieferant || t.common.unknown}</div>
+                <div><strong>{t.invoices.gross}:</strong> {formatAmount(viewingInvoice.brutto_betrag)} {viewingInvoice.waehrung || "EUR"}</div>
+                <div><strong>{t.invoices.net}:</strong> {formatAmount(viewingInvoice.netto_betrag)} {viewingInvoice.waehrung || "EUR"}</div>
+                <div><strong>{t.invoices.vatAmount}:</strong> {formatAmount(viewingInvoice.mwst_betrag)} {viewingInvoice.waehrung || "EUR"}</div>
+                <div><strong>{t.invoices.vatRate}:</strong> {viewingInvoice.mwst_satz || "-"}</div>
+                <div><strong>{t.invoices.dueDate}:</strong> {viewingInvoice.faelligkeitsdatum || "-"}</div>
+                <div className="search-view-description">
+                  <strong>{t.invoices.description}:</strong>
+                  <p>{viewingInvoice.beschreibung || "-"}</p>
                 </div>
               </div>
-              <div className="edit-actions">
-                <a href={editingInvoiceFileUrl} target="_blank" rel="noreferrer" className="btn btn-outline">{t.common.view}</a>
-                <button type="button" className="btn btn-outline" onClick={() => openDeleteConfirm(editingInvoice)}>{t.common.delete}</button>
-                <button type="submit" className="btn btn-primary">{t.common.save}</button>
+              <div className="page-back-bar" style={{ marginTop: "1.5rem" }}>
+                <button type="button" className="btn btn-outline btn-back" onClick={closeView}>
+                  {t.common.backToList}
+                </button>
               </div>
-            </form>
+            </div>
           </div>
         </section>
-      ) : null}
 
-      <section className="rechnungen-section">
-        <div className="section-header">
-          <h2>{t.invoices.title}</h2>
-          <div className="filter-group">
-            <select
-              className="filter-select"
-              value={zeitraum}
-              onChange={(event) => {
-                setZeitraum(event.target.value as Zeitraum);
-                setPage(1);
-              }}
-            >
-              <option value="all">{t.invoices.allInvoices}</option>
-              <option value="week">{t.invoices.weekly}</option>
-              <option value="month">{t.invoices.monthly}</option>
-              <option value="quarter">{t.invoices.quarterly}</option>
-              <option value="year">{t.invoices.yearly}</option>
-            </select>
+      /* ─── EDIT PAGE ─────────────────────────────────────────────── */
+      ) : editingInvoice ? (
+        <section className="invoice-edit-page">
+          <div className="page-back-bar">
+            <button type="button" className="btn btn-outline btn-back" onClick={closeEdit}>
+              {t.common.backToList}
+            </button>
           </div>
-        </div>
+          {status ? <div className={`alert ${status.type === "ok" ? "alert-success" : "alert-error"}`}>{status.text}</div> : null}
+          <section id="edit-panel" className="edit-panel">
+            <h2>{t.invoices.editTitle}</h2>
+            <p>{t.invoices.editIntro}</p>
+            <div className="edit-layout">
+              <div className="edit-preview">
+                <div className="edit-preview-toolbar">
+                  <button
+                    type="button"
+                    className="zoom-btn"
+                    onClick={() => { setEditZoomLevel((z) => Math.max(60, z - 20)); setEditPan({ x: 0, y: 0 }); }}
+                    title={t.invoices.zoomReset}
+                    aria-label="Zoom out"
+                    disabled={editZoomLevel <= 60}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="11" cy="11" r="7" />
+                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                      <line x1="8" y1="11" x2="14" y2="11" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="zoom-btn"
+                    onClick={() => { setEditZoomLevel(100); setEditPan({ x: 0, y: 0 }); }}
+                    title={t.invoices.zoomReset}
+                    aria-label={t.invoices.zoomReset}
+                    disabled={editZoomLevel === 100}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="11" cy="11" r="7" />
+                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                      <path d="M8.5 9.5h4a2 2 0 0 1 0 4h-4" />
+                      <path d="m10.5 7.5-2 2 2 2" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="zoom-btn"
+                    onClick={() => setEditZoomLevel((z) => Math.min(400, z + 20))}
+                    title={t.invoices.zoomIn}
+                    aria-label={t.invoices.zoomIn}
+                    disabled={editZoomLevel >= 400}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="11" cy="11" r="7" />
+                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                      <line x1="11" y1="8" x2="11" y2="14" />
+                      <line x1="8" y1="11" x2="14" y2="11" />
+                    </svg>
+                  </button>
+                  <span style={{ fontSize: "0.78rem", color: "#64748b", minWidth: 36, textAlign: "center" }}>{editZoomLevel}%</span>
+                  <span style={{ fontSize: "0.72rem", color: "#94a3b8" }}>drag to pan</span>
+                </div>
+                <div
+                  className="edit-doc-wrap view-pan-stage"
+                  style={{
+                    overflow: "hidden",
+                    cursor: editDragging ? "grabbing" : "grab"
+                  }}
+                  onMouseDown={handleEditDragStart}
+                  onMouseMove={handleEditDragMove}
+                  onMouseUp={handleEditDragEnd}
+                  onMouseLeave={handleEditDragEnd}
+                >
+                  {editingIsPdf ? (
+                    <object
+                      data={`${editingInvoiceFileUrl}#page=1&view=FitH`}
+                      type="application/pdf"
+                      className="edit-doc edit-doc-pdf"
+                      style={{
+                        transform: `translate(${editPan.x}px, ${editPan.y}px) scale(${editZoomLevel / 100})`,
+                        transformOrigin: "center top",
+                        transition: editDragging ? "none" : "transform 0.15s ease",
+                        pointerEvents: editZoomLevel > 100 ? "none" : "auto"
+                      }}
+                    />
+                  ) : (
+                    <img
+                      src={editingInvoiceFileUrl}
+                      className="edit-doc edit-doc-image"
+                      alt={t.app.name}
+                      draggable={false}
+                      style={{
+                        transform: `translate(${editPan.x}px, ${editPan.y}px) scale(${editZoomLevel / 100})`,
+                        transformOrigin: "center top",
+                        transition: editDragging ? "none" : "transform 0.15s ease",
+                        userSelect: "none",
+                        pointerEvents: "none"
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
 
-        {status ? <div className={`alert ${status.type === "ok" ? "alert-success" : "alert-error"}`}>{status.text}</div> : null}
-
-        <div className="rechnungen-layout">
-          <aside className="rechnungen-sidebar">
-            <h3>{t.invoices.typeHeading}</h3>
-            <div className="type-buttons">
-              <button className={`type-btn ${typ === "eingang" ? "active" : ""}`} type="button" onClick={() => { setTyp("eingang"); setPage(1); }}>
-                {t.invoices.incomingInvoices}
-              </button>
-              <button className={`type-btn ${typ === "ausgang" ? "active" : ""}`} type="button" onClick={() => { setTyp("ausgang"); setPage(1); }}>
-                {t.invoices.outgoingInvoices}
-              </button>
-            </div>
-            <h3>{t.invoices.categories}</h3>
-            <div className="category-list">
-              <button className={`category-item ${category === "" ? "active" : ""}`} type="button" onClick={() => { setCategory(""); setPage(1); }}>
-                <span className="cat-color cat-color-all" />
-                <span className="cat-label">{t.invoices.allCategories}</span>
-              </button>
-              {categories.map((cat) => (
-                <button key={cat.id} className={`category-item ${category === cat.name ? "active" : ""}`} type="button" onClick={() => { setCategory(cat.name); setPage(1); }}>
-                  <span className="cat-color" style={{ background: cat.farbe || "#95A5A6" }} />
-                  <span className="cat-label">{cat.name}</span>
-                </button>
-              ))}
-            </div>
-          </aside>
-
-          <div className="rechnungen-content">
-            <h3 className="split-title">{typ === "ausgang" ? t.invoices.outgoingInvoices : t.invoices.incomingInvoices}</h3>
-
-            {loading ? <p className="empty-note">{t.common.loading}</p> : null}
-            {!loading && filteredSorted.length === 0 ? <p className="empty-note">{t.invoices.emptyFilter}</p> : null}
-
-            {!loading && filteredSorted.length > 0
-              ? grouped.map(([groupName, groupInvoices]) => (
-                  <div key={groupName}>
-                    {groupName !== t.invoices.allInvoices ? <h4 className="group-title">{groupName}</h4> : null}
-                    <div className="rechnungen-grid">
-                      {groupInvoices.map((invoice) => {
-                        const safeName = invoice.dateiname;
-                        const fileUrl = `/api/uploads/${encodeURIComponent(safeName)}`;
-                        const isPdf = safeName.toLowerCase().endsWith(".pdf") || invoice.dateityp.toLowerCase().includes("pdf");
-                        const rechnungsdatumLabel = formatDate(parseDate(invoice.rechnungsdatum));
-                        const eingangsdatumLabel = formatDateTime(parseDate(invoice.hochladezeit));
-                        return (
-                          <div className="rechnung-row" data-kategorie={invoice.kategorie_name ?? ""} key={invoice.id}>
-                            <button
-                              type="button"
-                              className="thumb-btn"
-                              data-file={fileUrl}
-                              data-type={invoice.dateityp}
-                              title={t.invoices.previewOpen}
-                              onMouseEnter={() => openPreview(fileUrl, invoice.dateityp)}
-                              onMouseLeave={() => scheduleClosePreview()}
-                              onFocus={() => openPreview(fileUrl, invoice.dateityp)}
-                              onBlur={() => scheduleClosePreview()}
-                            >
-                              {isPdf ? (
-                                <object data={`${fileUrl}#page=1&view=FitH`} type="application/pdf" className="rechnung-thumb pdf-thumb">
-                                  <span className="thumb-pdf">{t.common.pdf}</span>
-                                </object>
-                              ) : (
-                                <img src={fileUrl} className="rechnung-thumb" alt={t.app.name} />
-                              )}
-                            </button>
-                            <div className="row-main">
-                              <div className="row-main-top">
-                                <span className="rechnung-badge" style={{ background: invoice.farbe || "#95A5A6" }}>
-                                  {invoice.kategorie_name || t.dashboard.uncategorized}
-                                </span>
-                                <DescriptionSummary description={invoice.beschreibung} fallbackSupplier={invoice.lieferant} compact />
-                              </div>
-                              <div className="row-main-bottom">
-                                <span className="row-meta">{t.invoices.invoiceDateLabel}: {rechnungsdatumLabel}</span>
-                                <span className="row-meta">{t.invoices.receivedDateLabel}: {eingangsdatumLabel}</span>
-                              </div>
-                            </div>
-                            <div className="row-actions">
-                              <div className="row-actions-amount">{formatAmount(invoice.brutto_betrag)} {invoice.waehrung || "EUR"}</div>
-                              <div className="row-actions-meta">{t.invoices.vatShort}: {String(invoice.mwst_satz ?? "0")}% {t.invoices.net}: {formatAmount(invoice.netto_betrag)}</div>
-                              <div className="row-actions-icons">
-                                <a href={fileUrl} target="_blank" rel="noreferrer" className="action-square action-view" title={t.common.view} aria-label={t.common.view}>
-                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                                    <circle cx="12" cy="12" r="3" />
-                                  </svg>
-                                </a>
-                                <button type="button" className="action-square action-edit" title={t.common.edit} aria-label={t.common.edit} onClick={() => openEdit(invoice)}>
-                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M12 20h9" />
-                                    <path d="M16.5 3.5a2.1 2.1 0 113 3L7 19l-4 1 1-4 12.5-12.5z" />
-                                  </svg>
-                                </button>
-                                <button type="button" className="action-square action-delete" title={t.common.delete} aria-label={t.common.delete} onClick={() => openDeleteConfirm(invoice)}>
-                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <polyline points="3,6 5,6 21,6" />
-                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                  </svg>
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
+              <form method="POST" className="edit-form" onSubmit={(event) => void submitEdit(event)}>
+                <div className="edit-grid">
+                  <div className="form-group">
+                    <label>{t.invoices.supplier}</label>
+                    <input value={editState.lieferant} onChange={(event) => setEditState((prev) => ({ ...prev, lieferant: event.target.value }))} />
+                  </div>
+                  <div className="form-group">
+                    <label>{t.invoices.category}</label>
+                    <div className="quick-cat-row">
+                      <select value={editState.kategorie_id} onChange={(event) => setEditState((prev) => ({ ...prev, kategorie_id: event.target.value }))}>
+                        <option value="0">{t.common.none}</option>
+                        {categories.map((cat) => (
+                          <option key={cat.id} value={cat.id}>{cat.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="quick-cat-btn"
+                        title={t.admin.newCategory}
+                        onClick={() => { setShowQuickCat(true); setQuickCatName(""); setQuickCatDesc(""); setQuickCatColor("#6366F1"); }}
+                      >+</button>
                     </div>
                   </div>
-                ))
-              : null}
-
-            {totalInvoices > 0 ? (
-              <div className="pagination-footer">
-                <div className="pagination-limit">
-                  <label htmlFor="limitSelect">{t.invoices.perPage}</label>
-                  <select
-                    id="limitSelect"
-                    className="filter-select"
-                    value={String(limit)}
-                    onChange={(event) => {
-                      const raw = event.target.value;
-                      const next = raw === "all" ? "all" : (Number(raw) as LimitValue);
-                      setLimit(next);
-                      setPage(1);
-                    }}
-                  >
-                    <option value="5">5</option>
-                    <option value="10">10</option>
-                    <option value="20">20</option>
-                    <option value="50">50</option>
-                    <option value="100">100</option>
-                    <option value="all">{t.common.all}</option>
-                  </select>
-                </div>
-                {limit !== "all" && totalPages > 1 ? (
-                  <div className="pagination-pages">
-                    {currentPage > 1 ? (
-                      <button className="page-link" type="button" onClick={() => setPage(currentPage - 1)}>
-                        &laquo;
-                      </button>
-                    ) : null}
-                    {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((i) => (
-                      <button key={i} className={`page-link ${i === currentPage ? "active" : ""}`} type="button" onClick={() => setPage(i)}>
-                        {i}
-                      </button>
-                    ))}
-                    {currentPage < totalPages ? (
-                      <button className="page-link" type="button" onClick={() => setPage(currentPage + 1)}>
-                        &raquo;
-                      </button>
-                    ) : null}
+                  <div className="form-group">
+                    <label>{t.invoices.invoiceType}</label>
+                    <select value={editState.rechnung_typ} onChange={(event) => setEditState((prev) => ({ ...prev, rechnung_typ: event.target.value as "eingang" | "ausgang" }))}>
+                      <option value="eingang">{t.invoices.incoming}</option>
+                      <option value="ausgang">{t.invoices.outgoing}</option>
+                    </select>
                   </div>
-                ) : null}
-              </div>
-            ) : null}
+                  <div className="form-group">
+                    <label>{t.invoices.invoiceDate}</label>
+                    <input type="date" value={editState.rechnungsdatum} onChange={(event) => setEditState((prev) => ({ ...prev, rechnungsdatum: event.target.value }))} />
+                  </div>
+                  <div className="form-group">
+                    <label>{t.invoices.dueDate}</label>
+                    <input type="date" value={editState.faelligkeitsdatum} onChange={(event) => setEditState((prev) => ({ ...prev, faelligkeitsdatum: event.target.value }))} />
+                  </div>
+                  <div className="form-group">
+                    <div className="vat-guidance">
+                      <strong>{t.invoices.vatGuidanceTitle}</strong> {t.invoices.vatGuidanceText}
+                    </div>
+                  </div>
+                  <div className="form-group full">
+                    <div className="tax-input-grid">
+                      <div className="form-group">
+                        <label>{t.invoices.net}</label>
+                        <input type="number" step="0.01" value={editState.netto_betrag} onChange={(event) => setEditState((prev) => ({ ...prev, netto_betrag: event.target.value }))} />
+                      </div>
+                      <div className="form-group">
+                        <label>{t.invoices.vatRate}</label>
+                        <input type="number" step="0.01" value={editState.mwst_satz} onChange={(event) => setEditState((prev) => ({ ...prev, mwst_satz: event.target.value }))} />
+                      </div>
+                      <div className="form-group">
+                        <label>{t.invoices.vatAmount}</label>
+                        <input type="number" step="0.01" value={editState.mwst_betrag} onChange={(event) => setEditState((prev) => ({ ...prev, mwst_betrag: event.target.value }))} />
+                      </div>
+                    </div>
+                  </div>
+                  {taxLines.length > 1
+                    ? taxLines.slice(1).map((line, idx) => (
+                        <div className="form-group full" key={`${line.rate}-${line.netto}-${line.tax}-${idx}-row`}>
+                          <div className="tax-input-grid">
+                            <div className="form-group">
+                              <label>{t.invoices.net}</label>
+                              <input value={line.netto} readOnly />
+                            </div>
+                            <div className="form-group">
+                              <label>{t.invoices.vatRate}</label>
+                              <input value={line.rate} readOnly />
+                            </div>
+                            <div className="form-group">
+                              <label>{t.invoices.vatAmount}</label>
+                              <input value={line.tax} readOnly />
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    : null}
+                  <div className="form-group">
+                    <label>{t.invoices.gross}</label>
+                    <input type="number" step="0.01" value={editState.brutto_betrag} onChange={(event) => setEditState((prev) => ({ ...prev, brutto_betrag: event.target.value }))} />
+                  </div>
+                  <div className="form-group">
+                    <label>{t.invoices.currency}</label>
+                    <input value={editState.waehrung} onChange={(event) => setEditState((prev) => ({ ...prev, waehrung: event.target.value }))} />
+                  </div>
+                  <div className="form-group full">
+                    <label>{t.invoices.description}</label>
+                    <div className="description-summary-box">
+                      <DescriptionSummary description={editState.beschreibung} fallbackSupplier={editState.lieferant} />
+                    </div>
+                  </div>
+                </div>
+                <div className="edit-actions">
+                  <button type="button" className="btn btn-outline" onClick={() => openDeleteConfirm(editingInvoice)}>{t.common.delete}</button>
+                  <button type="submit" className="btn btn-primary">{t.common.save}</button>
+                  <button type="button" className="btn btn-outline btn-back" onClick={closeEdit}>{t.common.backToList}</button>
+                </div>
+              </form>
+            </div>
+          </section>
+        </section>
+
+      /* ─── MAIN LIST ─────────────────────────────────────────────── */
+      ) : (
+        <section className="rechnungen-section">
+          <div className="section-header">
+            <h2>{t.invoices.title}</h2>
+            <div className="filter-group">
+              <select
+                className="filter-select"
+                value={zeitraum}
+                onChange={(event) => {
+                  setZeitraum(event.target.value as Zeitraum);
+                  setPage(1);
+                }}
+              >
+                <option value="all">{t.invoices.allInvoices}</option>
+                <option value="week">{t.invoices.weekly}</option>
+                <option value="month">{t.invoices.monthly}</option>
+                <option value="quarter">{t.invoices.quarterly}</option>
+                <option value="year">{t.invoices.yearly}</option>
+              </select>
+            </div>
           </div>
-        </div>
-      </section>
+
+          {status ? <div className={`alert ${status.type === "ok" ? "alert-success" : "alert-error"}`}>{status.text}</div> : null}
+
+          <div className="rechnungen-layout">
+            <aside className="rechnungen-sidebar">
+              <h3>{t.invoices.typeHeading}</h3>
+              <div className="type-buttons">
+                <button className={`type-btn ${typ === "eingang" ? "active" : ""}`} type="button" onClick={() => { setTyp("eingang"); setPage(1); }}>
+                  {t.invoices.incomingInvoices}
+                </button>
+                <button className={`type-btn ${typ === "ausgang" ? "active" : ""}`} type="button" onClick={() => { setTyp("ausgang"); setPage(1); }}>
+                  {t.invoices.outgoingInvoices}
+                </button>
+              </div>
+              <h3>{t.invoices.categories}</h3>
+              <div className="category-list">
+                <button className={`category-item ${category === "" ? "active" : ""}`} type="button" onClick={() => { setCategory(""); setPage(1); }}>
+                  <span className="cat-color cat-color-all" />
+                  <span className="cat-label">{t.invoices.allCategories}</span>
+                </button>
+                {categories.map((cat) => (
+                  <button key={cat.id} className={`category-item ${category === cat.name ? "active" : ""}`} type="button" onClick={() => { setCategory(cat.name); setPage(1); }}>
+                    <span className="cat-color" style={{ background: cat.farbe || "#95A5A6" }} />
+                    <span className="cat-label">{cat.name}</span>
+                  </button>
+                ))}
+              </div>
+            </aside>
+
+            <div className="rechnungen-content">
+              <h3 className="split-title">{typ === "ausgang" ? t.invoices.outgoingInvoices : t.invoices.incomingInvoices}</h3>
+
+              {loading ? <p className="empty-note">{t.common.loading}</p> : null}
+              {!loading && filteredSorted.length === 0 ? <p className="empty-note">{t.invoices.emptyFilter}</p> : null}
+
+              {!loading && filteredSorted.length > 0
+                ? grouped.map(([groupName, groupInvoices]) => (
+                    <div key={groupName}>
+                      {groupName !== t.invoices.allInvoices ? <h4 className="group-title">{groupName}</h4> : null}
+                      <div className="rechnungen-grid">
+                        {groupInvoices.map((invoice) => {
+                          const safeName = invoice.dateiname;
+                          const fileUrl = `/api/uploads/${encodeURIComponent(safeName)}`;
+                          const isPdf = safeName.toLowerCase().endsWith(".pdf") || invoice.dateityp.toLowerCase().includes("pdf");
+                          const rechnungsdatumLabel = formatDate(parseDate(invoice.rechnungsdatum));
+                          const eingangsdatumLabel = formatDateTime(parseDate(invoice.hochladezeit));
+                          return (
+                            <div className="rechnung-row" data-kategorie={invoice.kategorie_name ?? ""} key={invoice.id}>
+                              <button
+                                type="button"
+                                className="thumb-btn"
+                                data-file={fileUrl}
+                                data-type={invoice.dateityp}
+                                title={t.invoices.previewOpen}
+                                onMouseEnter={() => openPreview(fileUrl, invoice.dateityp)}
+                                onMouseLeave={() => scheduleClosePreview()}
+                                onFocus={() => openPreview(fileUrl, invoice.dateityp)}
+                                onBlur={() => scheduleClosePreview()}
+                              >
+                                {isPdf ? (
+                                  <object data={`${fileUrl}#page=1&view=FitH`} type="application/pdf" className="rechnung-thumb pdf-thumb">
+                                    <span className="thumb-pdf">{t.common.pdf}</span>
+                                  </object>
+                                ) : (
+                                  <img src={fileUrl} className="rechnung-thumb" alt={t.app.name} />
+                                )}
+                              </button>
+                              <div className="row-main">
+                                <div className="row-main-top">
+                                  <span className="rechnung-badge" style={{ background: invoice.farbe || "#95A5A6" }}>
+                                    {invoice.kategorie_name || t.dashboard.uncategorized}
+                                  </span>
+                                  <DescriptionSummary description={invoice.beschreibung} fallbackSupplier={invoice.lieferant} compact />
+                                </div>
+                                <div className="row-main-bottom">
+                                  <span className="row-meta">{t.invoices.invoiceDateLabel}: {rechnungsdatumLabel}</span>
+                                  <span className="row-meta">{t.invoices.receivedDateLabel}: {eingangsdatumLabel}</span>
+                                </div>
+                              </div>
+                              <div className="row-actions">
+                                <div className="row-actions-amount">{formatAmount(invoice.brutto_betrag)} {invoice.waehrung || "EUR"}</div>
+                                <div className="row-actions-meta">{t.invoices.vatShort}: {String(invoice.mwst_satz ?? "0")}% {t.invoices.net}: {formatAmount(invoice.netto_betrag)}</div>
+                                <div className="row-actions-icons">
+                                  <button type="button" className="action-square action-view" title={t.common.view} aria-label={t.common.view} onClick={() => openView(invoice)}>
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                      <circle cx="12" cy="12" r="3" />
+                                    </svg>
+                                  </button>
+                                  <button type="button" className="action-square action-edit" title={t.common.edit} aria-label={t.common.edit} onClick={() => openEdit(invoice)}>
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M12 20h9" />
+                                      <path d="M16.5 3.5a2.1 2.1 0 113 3L7 19l-4 1 1-4 12.5-12.5z" />
+                                    </svg>
+                                  </button>
+                                  <button type="button" className="action-square action-delete" title={t.common.delete} aria-label={t.common.delete} onClick={() => openDeleteConfirm(invoice)}>
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <polyline points="3,6 5,6 21,6" />
+                                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))
+                : null}
+
+              {totalInvoices > 0 ? (
+                <div className="pagination-footer">
+                  <div className="pagination-limit">
+                    <label htmlFor="limitSelect">{t.invoices.perPage}</label>
+                    <select
+                      id="limitSelect"
+                      className="filter-select"
+                      value={String(limit)}
+                      onChange={(event) => {
+                        const raw = event.target.value;
+                        const next = raw === "all" ? "all" : (Number(raw) as LimitValue);
+                        setLimit(next);
+                        setPage(1);
+                      }}
+                    >
+                      <option value="5">5</option>
+                      <option value="10">10</option>
+                      <option value="20">20</option>
+                      <option value="50">50</option>
+                      <option value="100">100</option>
+                      <option value="all">{t.common.all}</option>
+                    </select>
+                  </div>
+                  {limit !== "all" && totalPages > 1 ? (
+                    <div className="pagination-pages">
+                      {currentPage > 1 ? (
+                        <button className="page-link" type="button" onClick={() => setPage(currentPage - 1)}>
+                          &laquo;
+                        </button>
+                      ) : null}
+                      {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((i) => (
+                        <button key={i} className={`page-link ${i === currentPage ? "active" : ""}`} type="button" onClick={() => setPage(i)}>
+                          {i}
+                        </button>
+                      ))}
+                      {currentPage < totalPages ? (
+                        <button className="page-link" type="button" onClick={() => setPage(currentPage + 1)}>
+                          &raquo;
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </section>
+      )}
 
       <div id="previewModal" className="preview-modal" hidden={!preview}>
         <div className="preview-backdrop" data-close="1" onClick={() => setPreview(null)} />
@@ -768,6 +1044,62 @@ export function InvoicesClient() {
           </div>
         </div>
       </div>
+
+      {/* ─── NEW CATEGORY MODAL ──────────────────────────────────── */}
+      {showQuickCat ? (
+        <div className="preview-modal quick-cat-modal-wrap">
+          <div className="preview-backdrop" onClick={() => setShowQuickCat(false)} />
+          <div className="preview-content quick-cat-modal">
+            <div className="quick-cat-modal-header">
+              <h3>{t.admin.newCategory}</h3>
+              <button type="button" className="quick-cat-modal-close" onClick={() => setShowQuickCat(false)} aria-label={t.common.close}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="quick-cat-modal-body">
+              <div className="form-group">
+                <label>{t.admin.categoryName}</label>
+                <input
+                  className="quick-cat-modal-input"
+                  value={quickCatName}
+                  onChange={(e) => setQuickCatName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void submitQuickCat(); } }}
+                  autoFocus
+                  maxLength={40}
+                />
+              </div>
+              <div className="form-group">
+                <label>{t.admin.description}</label>
+                <input
+                  className="quick-cat-modal-input"
+                  value={quickCatDesc}
+                  onChange={(e) => setQuickCatDesc(e.target.value)}
+                  maxLength={120}
+                />
+              </div>
+              <div className="form-group">
+                <label>{t.admin.color}</label>
+                <input
+                  type="color"
+                  className="quick-cat-modal-color"
+                  value={quickCatColor}
+                  onChange={(e) => setQuickCatColor(e.target.value)}
+                />
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn quick-cat-modal-save"
+              onClick={() => void submitQuickCat()}
+              disabled={quickCatLoading || !quickCatName.trim()}
+            >
+              {quickCatLoading ? "…" : t.admin.newCategory}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div id="deleteConfirmModal" className="preview-modal" hidden={!deleteModal}>
         <div className="preview-backdrop" onClick={() => setDeleteModal(null)} />

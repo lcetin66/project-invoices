@@ -426,6 +426,10 @@ body {
     border-radius: 12px;
     padding: 14px;
     height: fit-content;
+    position: sticky;
+    top: 16px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
 }
 .rechnungen-sidebar h3 {
     margin: 8px 0 10px;
@@ -769,7 +773,7 @@ body {
     background: #ffffff;
 }
 .edit-doc-wrap.zoomed .edit-doc {
-    transform: scale(1.65);
+    transform: scale(var(--edit-zoom, 1.65));
     transform-origin: var(--zoom-x, 50%) var(--zoom-y, 50%);
 }
 .edit-grid {
