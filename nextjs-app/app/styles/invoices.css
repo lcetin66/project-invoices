@@ -69,3 +69,219 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ─── Quick category add ────────────────────────────────────────── */
+.quick-cat-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.quick-cat-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.quick-cat-btn {
+  flex-shrink: 0;
+  width: 34px;
+  height: 38px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e2e8f0);
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 1.2rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.quick-cat-btn:hover {
+  background: #6366f1;
+  color: #fff;
+  border-color: #6366f1;
+}
+
+/* ─── New category modal ─────────────────────────────────────────── */
+.quick-cat-modal-wrap {
+  display: flex !important;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.quick-cat-modal {
+  width: 360px !important;
+  max-width: 92vw !important;
+  height: fit-content !important;
+  min-height: 0 !important;
+  max-height: 90vh !important;
+  margin: 10vh auto 0 !important;
+  padding: 28px 24px 24px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0 !important;
+  overflow: auto !important;
+  box-sizing: border-box !important;
+}
+
+.quick-cat-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.quick-cat-modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.quick-cat-modal-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.quick-cat-modal-close:hover {
+  background: #fee2e2;
+  color: #dc2626;
+  border-color: #fca5a5;
+}
+
+.quick-cat-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.quick-cat-modal-body .form-group {
+  margin: 0;
+}
+
+.quick-cat-modal-body label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.quick-cat-modal-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  outline: none;
+  background: #fff;
+  color: #1e293b;
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.quick-cat-modal-input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+}
+
+.quick-cat-modal-color {
+  width: 100%;
+  height: 48px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 4px 6px;
+  cursor: pointer;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.quick-cat-modal-save {
+  width: 100%;
+  height: 46px;
+  border-radius: 10px;
+  border: none;
+  background: #6366f1;
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quick-cat-modal-save:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+.quick-cat-modal-save:disabled {
+  background: #a5b4fc;
+  cursor: not-allowed;
+}
+
+/* ─── Pan/zoom stage override for view page ────────────────────── */
+.view-pan-stage {
+  position: relative;
+  user-select: none;
+}
+
+.view-pan-stage img,
+.view-pan-stage object {
+  will-change: transform;
+}
+
+/* ─── Separate page views (view / edit) ─────────────────────────── */
+.invoice-detail-page,
+.invoice-edit-page {
+  padding: 24px 0;
+  min-height: 60vh;
+}
+
+.page-back-bar {
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+}
+
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 8px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.invoice-edit-page .edit-panel {
+  box-shadow: none;
+  margin-top: 0;
+}
+
+@media (max-width: 768px) {
+  .invoice-detail-page,
+  .invoice-edit-page {
+    padding: 16px 0;
+  }
+}

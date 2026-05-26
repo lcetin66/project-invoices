@@ -190,7 +190,6 @@ export function DashboardStatsClient() {
     const vatTotals = new Map<string, number>();
     const weekQuality = Array.from({ length: 8 }, (_, i) => ({ label: `W-${8 - i}`, sum: 0, count: 0 }));
     const recurringBySupplier = new Map<string, { total: number; count: number }>();
-    const heatmap = Array.from({ length: 7 }, () => Array.from({ length: 4 }, () => 0));
     let overdue = 0;
     let next7 = 0;
     let onTime = 0;
@@ -212,9 +211,6 @@ export function DashboardStatsClient() {
           const cat = inv.kategorie_name || t.dashboard.uncategorized;
           monthEntry.categories.set(cat, (monthEntry.categories.get(cat) ?? 0) + amount);
         }
-        const weekBucket = Math.min(3, Math.max(0, Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24 * 7))));
-        const weekday = (date.getDay() + 6) % 7;
-        heatmap[weekday][3 - weekBucket] += amount;
       }
 
       const supplier = inv.lieferant || t.dashboard.unknown;
@@ -297,7 +293,6 @@ export function DashboardStatsClient() {
         { label: "Düzenli", value: recurringTotal, color: "#111827" },
         { label: "Tek Sefer", value: oneOffTotal, color: "#2563eb" }
       ],
-      heatmap
     };
   }, [invoices]);
 
@@ -579,20 +574,19 @@ export function DashboardStatsClient() {
                     "Vade / Gecikme Durumu",
                     "Belge Kalite & AI Güven",
                     "Düzenli vs Tek Sefer",
-                    "Haftanın Günü Isı Haritası"
                   ][activeBottomSlide]}
                 </h4>
               </div>
               <div className="pie-slider-controls">
                 <button
                   type="button"
-                  onClick={() => setActiveBottomSlide((prev) => (prev === 0 ? 7 : prev - 1))}
+                  onClick={() => setActiveBottomSlide((prev) => (prev === 0 ? 6 : prev - 1))}
                   aria-label="Önceki"
                 >←</button>
-                <span>{activeBottomSlide + 1}/8</span>
+                <span>{activeBottomSlide + 1}/7</span>
                 <button
                   type="button"
-                  onClick={() => setActiveBottomSlide((prev) => (prev === 7 ? 0 : prev + 1))}
+                  onClick={() => setActiveBottomSlide((prev) => (prev === 6 ? 0 : prev + 1))}
                   aria-label="Sonraki"
                 >→</button>
               </div>
@@ -662,23 +656,6 @@ export function DashboardStatsClient() {
                 </div>
               )}
               {activeBottomSlide === 6 && <PieChart data={analytics.recurringDonut} radius={100} innerRadius={56} />}
-              {activeBottomSlide === 7 && (
-                <div className="heatmap-grid">
-                  {analytics.heatmap.flatMap((row, ri) =>
-                    row.map((v, ci) => {
-                      const max = Math.max(1, ...analytics.heatmap.flat());
-                      const alpha = v / max;
-                      return (
-                        <span
-                          key={`b-${ri}-${ci}`}
-                          style={{ background: `rgba(37,99,235,${Math.max(0.12, alpha)})` }}
-                          title={`${v.toFixed(2)} EUR`}
-                        />
-                      );
-                    })
-                  )}
-                </div>
-              )}
             </div>
           </div>
         </article>

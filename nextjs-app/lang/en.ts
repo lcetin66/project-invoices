@@ -171,7 +171,8 @@ export const en = {
     unknown: "Unknown",
     all: "All",
     loading: "Loading data...",
-    pdf: "PDF"
+    pdf: "PDF",
+    backToList: "← Back to list"
   },
   invoices: {
     editTitle: "Edit invoice",
