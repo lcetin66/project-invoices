@@ -894,7 +894,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
           </div>
         ) : (
           <div className="rechnungen-grid">
-            {invoices.map((invoice) => {
+            {invoices.slice(0, 2).map((invoice) => {
               const fileName = invoice.dateiname || "";
               const isPdf = fileName.toLowerCase().endsWith(".pdf") || invoice.dateityp.includes("pdf");
               return (
@@ -1047,32 +1047,6 @@ function stageToLocalPoint(stagePoint: Point, stage: Point, pan: Point, rotation
 
 function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), "image/png", 0.96));
-}
-
-function rotateCanvasByDegrees(source: HTMLCanvasElement, degrees: number): HTMLCanvasElement {
-  const normalized = ((degrees % 360) + 360) % 360;
-  if (Math.abs(normalized) < 0.001) return source;
-
-  const rad = (normalized * Math.PI) / 180;
-  const cos = Math.abs(Math.cos(rad));
-  const sin = Math.abs(Math.sin(rad));
-  const w = source.width;
-  const h = source.height;
-  const outW = Math.max(1, Math.round(w * cos + h * sin));
-  const outH = Math.max(1, Math.round(w * sin + h * cos));
-
-  const out = document.createElement("canvas");
-  out.width = outW;
-  out.height = outH;
-  const ctx = out.getContext("2d");
-  if (!ctx) return source;
-
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.translate(outW / 2, outH / 2);
-  ctx.rotate(rad);
-  ctx.drawImage(source, -w / 2, -h / 2);
-  return out;
 }
 
 type DashboardImageEditorModalProps = {
@@ -1342,8 +1316,9 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
         outputContext.drawImage(filteredCanvas, 0, 0);
       }
     }
-    const orientationAdjusted = Math.abs(rotation) > 0.5 ? rotateCanvasByDegrees(outputCanvas, rotation) : outputCanvas;
-    const blob = await canvasBlob(orientationAdjusted);
+    // Rotation is already encoded in the chosen source points via stage/local transforms.
+    // Re-applying it here causes inconsistent final angles on some images.
+    const blob = await canvasBlob(outputCanvas);
     if (!blob) {
       setError("Duzeltilmis resim olusturulamadi.");
       return null;
@@ -1355,9 +1330,9 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
   async function confirmCrop() {
     const edited = await buildEditedFile();
     if (!edited) return;
-      if (previewUrlRef.current) {
-        URL.revokeObjectURL(previewUrlRef.current);
-      }
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+    }
     const url = URL.createObjectURL(edited);
     setPreviewFile(edited);
     setPreviewUrl(url);
