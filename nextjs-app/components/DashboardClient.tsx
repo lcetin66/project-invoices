@@ -36,7 +36,9 @@ type UploadApiResponse = {
         total_ms?: number;
         main_call_ms?: number;
         tax_call_ms?: number;
+        main_retry_call_ms?: number;
       };
+      main_retry_used?: boolean;
       image_payload?: {
         source_mime?: string;
         source_size_bytes?: number;
@@ -621,11 +623,13 @@ export function DashboardClient({ username }: DashboardClientProps) {
         const totalMs = Number(timingPayload.total_ms ?? 0);
         const mainMs = Number(timingPayload.main_call_ms ?? 0);
         const taxMs = Number(timingPayload.tax_call_ms ?? 0);
+        const mainRetryMs = Number(timingPayload.main_retry_call_ms ?? 0);
         const otherMs = Math.max(0, totalMs - mainMs - taxMs);
+        const retryUsed = Boolean(visionTrace?.main_retry_used);
         pushDebug(
           "info",
           "Vision-Zeitprofil",
-          `Gesamt: ${totalMs} ms | Hauptaufruf: ${mainMs} ms | Steueraufruf: ${taxMs} ms | Sonstiges: ${otherMs} ms`
+          `Gesamt: ${totalMs} ms | Hauptaufruf: ${mainMs} ms | Main-Retry: ${retryUsed ? "ja" : "nein"} (${mainRetryMs} ms) | Steueraufruf: ${taxMs} ms | Sonstiges: ${otherMs} ms`
         );
       }
       setResult({

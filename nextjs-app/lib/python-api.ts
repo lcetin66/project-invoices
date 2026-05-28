@@ -23,7 +23,9 @@ export interface ClassifierResponse {
         total_ms?: number;
         main_call_ms?: number;
         tax_call_ms?: number;
+        main_retry_call_ms?: number;
       };
+      main_retry_used?: boolean;
       image_payload?: {
         source_mime?: string;
         source_size_bytes?: number;
