@@ -31,6 +31,24 @@ type UploadApiResponse = {
     ocr_text_preview?: string;
     mode?: string;
     vision_debug?: string;
+    vision_trace?: {
+      timings_ms?: {
+        total_ms?: number;
+        main_call_ms?: number;
+        tax_call_ms?: number;
+      };
+      image_payload?: {
+        source_mime?: string;
+        source_size_bytes?: number;
+        source_width?: number;
+        source_height?: number;
+        sent_mime?: string;
+        sent_size_bytes?: number;
+        sent_width?: number;
+        sent_height?: number;
+        chunk_count?: number;
+      };
+    };
   } | null;
   ergebnis?: Record<string, unknown>;
   qualitaet_score?: number;
@@ -128,6 +146,31 @@ function imageFromFile(file: File): Promise<HTMLImageElement> {
     };
     image.src = url;
   });
+}
+
+function formatBytes(size: number): string {
+  if (!Number.isFinite(size) || size <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = size;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(value >= 100 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+async function readImageDimensions(file: File): Promise<{ width: number; height: number } | null> {
+  if (!isImageFile(file)) return null;
+  try {
+    const image = await imageFromFile(file);
+    return {
+      width: Number(image.naturalWidth || 0),
+      height: Number(image.naturalHeight || 0)
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function looksLikeCleanInvoiceImage(file: File): Promise<boolean> {
@@ -511,6 +554,12 @@ export function DashboardClient({ username }: DashboardClientProps) {
     };
     lastOrientationLockedRef.current = orientationLocked;
     pushDebug("info", t.dashboard.newProcess, selectedFile.name || t.common.unknown);
+    const uploadDims = await readImageDimensions(selectedFile);
+    pushDebug(
+      "info",
+      "Upload-Datei",
+      `${selectedFile.name} | ${selectedFile.type || "application/octet-stream"} | ${formatBytes(selectedFile.size)}${uploadDims ? ` | ${uploadDims.width}x${uploadDims.height}px` : ""}`
+    );
     setProgressState({
       open: true,
       title: t.dashboard.progressTitle,
@@ -545,11 +594,40 @@ export function DashboardClient({ username }: DashboardClientProps) {
       const ocrPreview = String(data.debug?.ocr_text_preview ?? "").trim();
       const visionDbg = String(data.debug?.vision_debug ?? "").trim();
       const mode = String(data.debug?.mode ?? "").trim();
+      const visionTrace = data.debug?.vision_trace;
+      const imagePayload = visionTrace?.image_payload;
+      const timingPayload = visionTrace?.timings_ms;
       pushDebug(
         "info",
         t.dashboard.ocrDiagnostics,
         `${t.dashboard.debugMode}: ${mode || "-"} | ${t.dashboard.debugTextLength}: ${ocrLen}${ocrPreview ? ` | ${t.dashboard.debugPreview}: ${ocrPreview.slice(0, 220)}` : ""}${visionDbg ? ` | ${t.dashboard.debugVision}: ${visionDbg.slice(0, 240)}` : ""}`
       );
+      if (imagePayload) {
+        const sentBytes = Number(imagePayload.sent_size_bytes ?? 0);
+        const sentW = Number(imagePayload.sent_width ?? 0);
+        const sentH = Number(imagePayload.sent_height ?? 0);
+        const sourceBytes = Number(imagePayload.source_size_bytes ?? 0);
+        const sourceW = Number(imagePayload.source_width ?? 0);
+        const sourceH = Number(imagePayload.source_height ?? 0);
+        const sentMime = String(imagePayload.sent_mime ?? "");
+        const sourceMime = String(imagePayload.source_mime ?? "");
+        pushDebug(
+          "info",
+          "OpenAI Vision-Datei",
+          `Quelle: ${sourceMime || "-"} ${formatBytes(sourceBytes)}${sourceW > 0 && sourceH > 0 ? ` | ${sourceW}x${sourceH}px` : ""} -> Gesendet: ${sentMime || "-"} ${formatBytes(sentBytes)}${sentW > 0 && sentH > 0 ? ` | ${sentW}x${sentH}px` : ""}`
+        );
+      }
+      if (timingPayload) {
+        const totalMs = Number(timingPayload.total_ms ?? 0);
+        const mainMs = Number(timingPayload.main_call_ms ?? 0);
+        const taxMs = Number(timingPayload.tax_call_ms ?? 0);
+        const otherMs = Math.max(0, totalMs - mainMs - taxMs);
+        pushDebug(
+          "info",
+          "Vision-Zeitprofil",
+          `Gesamt: ${totalMs} ms | Hauptaufruf: ${mainMs} ms | Steueraufruf: ${taxMs} ms | Sonstiges: ${otherMs} ms`
+        );
+      }
       setResult({
         supplier: String(data.ergebnis?.lieferant ?? t.common.unknown),
         category: String(data.ergebnis?.kategorie ?? "Sonstige"),
@@ -1045,8 +1123,8 @@ function stageToLocalPoint(stagePoint: Point, stage: Point, pan: Point, rotation
   };
 }
 
-function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
-  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), "image/png", 0.96));
+function canvasBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), type, quality));
 }
 
 type DashboardImageEditorModalProps = {
@@ -1258,7 +1336,8 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
       Math.round((distance(sTopLeft, sBottomLeft) + distance(sTopRight, sBottomRight)) / 2)
     );
     const longestSide = Math.max(outputWidth, outputHeight);
-    const targetScale = longestSide > 3200 ? 3200 / longestSide : 1;
+    // Keep editor output lighter for faster vision API round-trips.
+    const targetScale = longestSide > 2200 ? 2200 / longestSide : 1;
     const finalWidth = Math.max(120, Math.round(outputWidth * targetScale));
     const finalHeight = Math.max(120, Math.round(outputHeight * targetScale));
 
@@ -1318,13 +1397,23 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
     }
     // Rotation is already encoded in the chosen source points via stage/local transforms.
     // Re-applying it here causes inconsistent final angles on some images.
-    const blob = await canvasBlob(outputCanvas);
+    // Export as JPEG (white background + compression) to reduce upload/vision latency.
+    const jpegCanvas = document.createElement("canvas");
+    jpegCanvas.width = outputCanvas.width;
+    jpegCanvas.height = outputCanvas.height;
+    const jpegContext = jpegCanvas.getContext("2d");
+    if (!jpegContext) return null;
+    jpegContext.fillStyle = "#ffffff";
+    jpegContext.fillRect(0, 0, jpegCanvas.width, jpegCanvas.height);
+    jpegContext.drawImage(outputCanvas, 0, 0);
+
+    const blob = await canvasBlob(jpegCanvas, "image/jpeg", 0.82);
     if (!blob) {
       setError("Duzeltilmis resim olusturulamadi.");
       return null;
     }
 
-    return new File([blob], `editor-${file.name.replace(/\.[^.]+$/, "")}.png`, { type: "image/png" });
+    return new File([blob], `editor-${file.name.replace(/\.[^.]+$/, "")}.jpg`, { type: "image/jpeg" });
   }
 
   async function confirmCrop() {

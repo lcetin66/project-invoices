@@ -18,6 +18,24 @@ export interface ClassifierResponse {
     ocr_text_preview?: string;
     mode?: string;
     vision_debug?: string;
+    vision_trace?: {
+      timings_ms?: {
+        total_ms?: number;
+        main_call_ms?: number;
+        tax_call_ms?: number;
+      };
+      image_payload?: {
+        source_mime?: string;
+        source_size_bytes?: number;
+        source_width?: number;
+        source_height?: number;
+        sent_mime?: string;
+        sent_size_bytes?: number;
+        sent_width?: number;
+        sent_height?: number;
+        chunk_count?: number;
+      };
+    };
   };
 }
 
