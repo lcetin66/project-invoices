@@ -1721,7 +1721,38 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
             "Content-Type": "application/json",
         }
 
-    def _vision_payload(prompt_text: str, image_b64: str, model_name: str):
+    def _needs_tax_fallback(parsed: dict) -> bool:
+        if not isinstance(parsed, dict):
+            return True
+        vals = [
+            str(parsed.get("mwst_betrag_1", "") or "").strip(),
+            str(parsed.get("mwst_satz_1", "") or "").strip(),
+            str(parsed.get("netto_betrag_1", "") or "").strip(),
+            str(parsed.get("mwst_betrag_2", "") or "").strip(),
+            str(parsed.get("mwst_satz_2", "") or "").strip(),
+            str(parsed.get("netto_betrag_2", "") or "").strip(),
+            str(parsed.get("mwst_betrag", "") or "").strip(),
+            str(parsed.get("mwst_satz", "") or "").strip(),
+            str(parsed.get("netto_betrag", "") or "").strip(),
+        ]
+        # If all tax-related fields are empty, run dedicated fallback extraction.
+        return not any(vals)
+
+    def _is_weak_main_result(parsed: dict) -> bool:
+        if not isinstance(parsed, dict):
+            return True
+        supplier = str(parsed.get("lieferant", "") or "").strip().lower()
+        category = str(parsed.get("kategorie", "") or "").strip().lower()
+        gross = str(parsed.get("brutto_betrag", "") or "").strip()
+        net = str(parsed.get("netto_betrag", "") or "").strip()
+        tax = str(parsed.get("mwst_betrag", "") or "").strip()
+
+        weak_supplier = (not supplier) or supplier in ("unbekannt", "unknown")
+        weak_category = (not category) or category == "sonstige"
+        weak_amounts = not any([gross, net, tax])
+        return weak_supplier or weak_category or weak_amounts
+
+    def _vision_payload(prompt_text: str, image_b64: str, model_name: str, image_detail: str = "auto"):
         return {
             "model": model_name,
             "messages": [
@@ -1730,7 +1761,7 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt_text},
-                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}", "detail": "high"}},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}", "detail": image_detail}},
                     ],
                 }
             ],
@@ -1739,7 +1770,7 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
             "response_format": {"type": "json_object"},
         }
 
-    def _vision_tax_payload(prompt_text: str, image_b64: str, model_name: str):
+    def _vision_tax_payload(prompt_text: str, image_b64: str, model_name: str, image_detail: str = "auto"):
         return {
             "model": model_name,
             "messages": [
@@ -1748,7 +1779,7 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt_text},
-                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}", "detail": "high"}},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}", "detail": image_detail}},
                     ],
                 }
             ],
@@ -1872,6 +1903,7 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
                     "total_ms": 0,
                     "main_call_ms": main_call_ms,
                     "tax_call_ms": 0,
+                    "main_retry_call_ms": 0,
                 },
             }
             if "error" in direct_json:
@@ -1897,23 +1929,54 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
                 _LAST_VISION_TRACE["error"] = f"json_parse_error: {repr(json_ex)}"
                 continue
             parsed_direct = _kategorie_nach_produktlogik(parsed_direct, "")
-            # Hard requirement: extract VAT buckets in a dedicated, minimal pass.
-            tax_payload = _vision_tax_payload(tax_only_prompt, encoded, model_name)
-            _LAST_VISION_TRACE["request_tax"] = _payload_debug_summary(tax_payload)
-            tax_started_at = time.perf_counter()
-            tax_resp = requests.post(url, headers=headers, json=tax_payload, timeout=35)
-            tax_call_ms = round((time.perf_counter() - tax_started_at) * 1000)
-            tax_json = tax_resp.json()
-            _LAST_VISION_TRACE["timings_ms"]["tax_call_ms"] = tax_call_ms
-            if "choices" in tax_json:
-                tax_raw = _extract_json_content(tax_json["choices"][0]["message"]["content"])
-                try:
-                    tax_parsed = json.loads(tax_raw)
-                    parsed_direct = _merge_tax_buckets(parsed_direct, tax_parsed)
-                    _LAST_VISION_TRACE["tax_raw_json_text"] = tax_raw
-                    _LAST_VISION_TRACE["tax_parsed_json"] = tax_parsed
-                except Exception:
-                    _LAST_VISION_TRACE["tax_raw_json_text"] = tax_raw
+            if _is_weak_main_result(parsed_direct):
+                retry_payload = _vision_payload(direct_parse_prompt, encoded, model_name, "high")
+                _LAST_VISION_TRACE["request_main_retry"] = _payload_debug_summary(retry_payload)
+                retry_started_at = time.perf_counter()
+                retry_resp = requests.post(url, headers=headers, json=retry_payload, timeout=45)
+                retry_call_ms = round((time.perf_counter() - retry_started_at) * 1000)
+                _LAST_VISION_TRACE["timings_ms"]["main_retry_call_ms"] = retry_call_ms
+                retry_json = retry_resp.json()
+                _LAST_VISION_TRACE["main_retry_status_code"] = retry_resp.status_code
+                if "choices" in retry_json:
+                    retry_raw = _extract_json_content(retry_json["choices"][0]["message"]["content"])
+                    try:
+                        retry_parsed = json.loads(retry_raw)
+                        retry_standard = _standard_response(retry_parsed)
+                        retry_standard = _sanitize_noisy_id_fields(retry_standard)
+                        retry_standard = _kategorie_nach_produktlogik(retry_standard, "")
+                        if not _is_weak_main_result(retry_standard):
+                            parsed_direct = retry_standard
+                            _LAST_VISION_TRACE["main_retry_used"] = True
+                        else:
+                            _LAST_VISION_TRACE["main_retry_used"] = False
+                    except Exception:
+                        _LAST_VISION_TRACE["main_retry_used"] = False
+                else:
+                    _LAST_VISION_TRACE["main_retry_used"] = False
+            else:
+                _LAST_VISION_TRACE["main_retry_used"] = False
+            # Tax fallback call only when the main extraction lacks VAT fields.
+            if _needs_tax_fallback(parsed_direct):
+                tax_payload = _vision_tax_payload(tax_only_prompt, encoded, model_name, "auto")
+                _LAST_VISION_TRACE["request_tax"] = _payload_debug_summary(tax_payload)
+                _LAST_VISION_TRACE["tax_fallback_used"] = True
+                tax_started_at = time.perf_counter()
+                tax_resp = requests.post(url, headers=headers, json=tax_payload, timeout=35)
+                tax_call_ms = round((time.perf_counter() - tax_started_at) * 1000)
+                tax_json = tax_resp.json()
+                _LAST_VISION_TRACE["timings_ms"]["tax_call_ms"] = tax_call_ms
+                if "choices" in tax_json:
+                    tax_raw = _extract_json_content(tax_json["choices"][0]["message"]["content"])
+                    try:
+                        tax_parsed = json.loads(tax_raw)
+                        parsed_direct = _merge_tax_buckets(parsed_direct, tax_parsed)
+                        _LAST_VISION_TRACE["tax_raw_json_text"] = tax_raw
+                        _LAST_VISION_TRACE["tax_parsed_json"] = tax_parsed
+                    except Exception:
+                        _LAST_VISION_TRACE["tax_raw_json_text"] = tax_raw
+            else:
+                _LAST_VISION_TRACE["tax_fallback_used"] = False
             _LAST_VISION_TRACE["parsed_final_json"] = parsed_direct
             if parsed_direct:
                 _LAST_VISION_TRACE["timings_ms"]["total_ms"] = round((time.perf_counter() - trace_started_at) * 1000)
