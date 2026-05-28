@@ -4,6 +4,7 @@ import json
 import requests
 import base64
 import re
+import time
 import tempfile
 from io import BytesIO
 from datetime import datetime, timedelta
@@ -1607,8 +1608,15 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
     elif ext in (".heic", ".heif"):
         mime = "image/heic"
 
+    trace_started_at = time.perf_counter()
     with open(datei_pfad, "rb") as f:
         raw_bytes = f.read()
+    source_size_bytes = len(raw_bytes)
+    source_width = 0
+    source_height = 0
+    sent_size_bytes = source_size_bytes
+    sent_width = 0
+    sent_height = 0
 
     # Focus and straighten receipt/invoice region before sending to vision model.
     encoded = base64.b64encode(raw_bytes).decode("ascii")
@@ -1616,12 +1624,18 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
     if Image is not None:
         try:
             with Image.open(BytesIO(raw_bytes)) as img:
+                source_width, source_height = img.size
                 cropped = prepare_invoice_image(img)
                 w, h = cropped.size
+                sent_width, sent_height = w, h
+                if cropped.mode in ("RGBA", "LA", "P"):
+                    cropped = cropped.convert("RGB")
                 buf = BytesIO()
-                cropped.save(buf, format="PNG")
-                encoded = base64.b64encode(buf.getvalue()).decode("ascii")
-                mime = "image/png"
+                cropped.save(buf, format="JPEG", quality=84, optimize=True)
+                prepared_bytes = buf.getvalue()
+                sent_size_bytes = len(prepared_bytes)
+                encoded = base64.b64encode(prepared_bytes).decode("ascii")
+                mime = "image/jpeg"
 
                 # Very long receipts lose detail in one-shot vision calls.
                 # Split vertically into overlapping chunks for more stable OCR.
@@ -1635,7 +1649,9 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
                         y2 = min(h, y + chunk_h)
                         part = cropped.crop((0, y, w, y2))
                         part_buf = BytesIO()
-                        part.save(part_buf, format="PNG")
+                        if part.mode in ("RGBA", "LA", "P"):
+                            part = part.convert("RGB")
+                        part.save(part_buf, format="JPEG", quality=84, optimize=True)
                         chunk_payloads.append(base64.b64encode(part_buf.getvalue()).decode("ascii"))
                         if y2 >= h:
                             break
@@ -1648,6 +1664,30 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
                     encoded_chunks = [encoded]
         except Exception:
             pass
+    if sent_width <= 0 or sent_height <= 0:
+        sent_width, sent_height = source_width, source_height
+    image_payload_meta = {
+        "source_mime": {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".gif": "image/gif",
+            ".tif": "image/tiff",
+            ".tiff": "image/tiff",
+            ".webp": "image/webp",
+            ".heic": "image/heic",
+            ".heif": "image/heif",
+        }.get(ext, "application/octet-stream"),
+        "source_size_bytes": int(source_size_bytes),
+        "source_width": int(source_width),
+        "source_height": int(source_height),
+        "sent_mime": mime,
+        "sent_size_bytes": int(sent_size_bytes),
+        "sent_width": int(sent_width),
+        "sent_height": int(sent_height),
+        "chunk_count": int(len(encoded_chunks)),
+    }
+    _LAST_VISION_TRACE["image_payload"] = image_payload_meta
 
     selected_model = _normalize_api_model(api_provider, api_model)
     candidate_models = []
@@ -1817,14 +1857,22 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
     for model_name in candidate_models:
         try:
             direct_payload = _vision_payload(direct_parse_prompt, encoded, model_name)
+            main_started_at = time.perf_counter()
             direct_resp = requests.post(url, headers=headers, json=direct_payload, timeout=45)
+            main_call_ms = round((time.perf_counter() - main_started_at) * 1000)
             direct_json = direct_resp.json()
             _LAST_VISION_TRACE = {
+                "image_payload": image_payload_meta,
                 "provider": api_provider,
                 "model": model_name,
                 "status_code": direct_resp.status_code,
                 "response_json": direct_json,
                 "request_main": _payload_debug_summary(direct_payload),
+                "timings_ms": {
+                    "total_ms": 0,
+                    "main_call_ms": main_call_ms,
+                    "tax_call_ms": 0,
+                },
             }
             if "error" in direct_json:
                 err_msg = str(direct_json.get("error", ""))[:300]
@@ -1852,8 +1900,11 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
             # Hard requirement: extract VAT buckets in a dedicated, minimal pass.
             tax_payload = _vision_tax_payload(tax_only_prompt, encoded, model_name)
             _LAST_VISION_TRACE["request_tax"] = _payload_debug_summary(tax_payload)
+            tax_started_at = time.perf_counter()
             tax_resp = requests.post(url, headers=headers, json=tax_payload, timeout=35)
+            tax_call_ms = round((time.perf_counter() - tax_started_at) * 1000)
             tax_json = tax_resp.json()
+            _LAST_VISION_TRACE["timings_ms"]["tax_call_ms"] = tax_call_ms
             if "choices" in tax_json:
                 tax_raw = _extract_json_content(tax_json["choices"][0]["message"]["content"])
                 try:
@@ -1865,14 +1916,21 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
                     _LAST_VISION_TRACE["tax_raw_json_text"] = tax_raw
             _LAST_VISION_TRACE["parsed_final_json"] = parsed_direct
             if parsed_direct:
+                _LAST_VISION_TRACE["timings_ms"]["total_ms"] = round((time.perf_counter() - trace_started_at) * 1000)
                 _LAST_VISION_DEBUG = f"model={model_name} status={direct_resp.status_code} ok"
                 return parsed_direct
         except Exception as ex:
             _LAST_VISION_DEBUG = f"model={model_name} exception={repr(ex)}"
             _LAST_VISION_TRACE = {
+                "image_payload": image_payload_meta,
                 "provider": api_provider,
                 "model": model_name,
                 "error": f"exception: {repr(ex)}",
+                "timings_ms": {
+                    "total_ms": round((time.perf_counter() - trace_started_at) * 1000),
+                    "main_call_ms": 0,
+                    "tax_call_ms": 0,
+                },
             }
             continue
     return {}

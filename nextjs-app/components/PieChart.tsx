@@ -143,8 +143,8 @@ export const PieChart: React.FC<PieChartProps> = ({ data, radius = 100 }) => {
           );
         })}
 
-        {/* 2. Top faces (back → front, on top of everything) */}
-        {sorted.map((sl) => {
+        {/* 2. Top faces (data order for stable fill seams) */}
+        {slices.map((sl) => {
           const isHov = hovIdx === sl.idx;
           return (
             <path
@@ -152,7 +152,9 @@ export const PieChart: React.FC<PieChartProps> = ({ data, radius = 100 }) => {
               d={topPath(sl.start, sl.end)}
               fill={sl.color}
               stroke="#fff"
-              strokeWidth={1}
+              strokeWidth={0.9}
+              strokeLinejoin="round"
+              strokeLinecap="round"
               style={{
                 cursor: "pointer",
                 filter: isHov
