@@ -1045,8 +1045,8 @@ function stageToLocalPoint(stagePoint: Point, stage: Point, pan: Point, rotation
   };
 }
 
-function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
-  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), "image/png", 0.96));
+function canvasBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), type, quality));
 }
 
 type DashboardImageEditorModalProps = {
@@ -1258,7 +1258,8 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
       Math.round((distance(sTopLeft, sBottomLeft) + distance(sTopRight, sBottomRight)) / 2)
     );
     const longestSide = Math.max(outputWidth, outputHeight);
-    const targetScale = longestSide > 3200 ? 3200 / longestSide : 1;
+    // Keep editor output lighter for faster vision API round-trips.
+    const targetScale = longestSide > 2200 ? 2200 / longestSide : 1;
     const finalWidth = Math.max(120, Math.round(outputWidth * targetScale));
     const finalHeight = Math.max(120, Math.round(outputHeight * targetScale));
 
@@ -1318,13 +1319,23 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
     }
     // Rotation is already encoded in the chosen source points via stage/local transforms.
     // Re-applying it here causes inconsistent final angles on some images.
-    const blob = await canvasBlob(outputCanvas);
+    // Export as JPEG (white background + compression) to reduce upload/vision latency.
+    const jpegCanvas = document.createElement("canvas");
+    jpegCanvas.width = outputCanvas.width;
+    jpegCanvas.height = outputCanvas.height;
+    const jpegContext = jpegCanvas.getContext("2d");
+    if (!jpegContext) return null;
+    jpegContext.fillStyle = "#ffffff";
+    jpegContext.fillRect(0, 0, jpegCanvas.width, jpegCanvas.height);
+    jpegContext.drawImage(outputCanvas, 0, 0);
+
+    const blob = await canvasBlob(jpegCanvas, "image/jpeg", 0.82);
     if (!blob) {
       setError("Duzeltilmis resim olusturulamadi.");
       return null;
     }
 
-    return new File([blob], `editor-${file.name.replace(/\.[^.]+$/, "")}.png`, { type: "image/png" });
+    return new File([blob], `editor-${file.name.replace(/\.[^.]+$/, "")}.jpg`, { type: "image/jpeg" });
   }
 
   async function confirmCrop() {
