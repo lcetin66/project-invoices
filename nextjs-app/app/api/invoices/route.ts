@@ -90,6 +90,47 @@ type TaxLine = {
   tax: number | null;
 };
 
+function normalizeTaxLineSet(lines: TaxLine[]): TaxLine[] {
+  const out: TaxLine[] = [];
+  const seen = new Set<string>();
+  for (const line of lines) {
+    const rate = Number(line.rate);
+    if (!Number.isFinite(rate) || rate < 0) continue;
+    const key = `${rate}|${line.netto ?? ""}|${line.tax ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      rate,
+      netto: line.netto == null || Number.isNaN(line.netto) ? null : line.netto,
+      tax: line.tax == null || Number.isNaN(line.tax) ? null : line.tax
+    });
+  }
+  return out;
+}
+
+function scoreTaxLineSet(lines: TaxLine[], grossAmount: number): number {
+  if (lines.length === 0) return Number.POSITIVE_INFINITY;
+  const completeCount = lines.filter((line) => line.netto != null && line.tax != null).length;
+  const distinctRates = new Set(lines.map((line) => line.rate)).size;
+  const nettoSum = lines.reduce((sum, line) => sum + (line.netto ?? 0), 0);
+  const taxSum = lines.reduce((sum, line) => sum + (line.tax ?? 0), 0);
+  const total = nettoSum + taxSum;
+  const grossDiff = grossAmount > 0 ? Math.abs(total - grossAmount) : 0;
+  const missingPenalty = (lines.length - completeCount) * 5;
+  const duplicatePenalty = distinctRates < lines.length ? 5 : 0;
+  return grossDiff + missingPenalty + duplicatePenalty;
+}
+
+function chooseBestTaxLines(primary: TaxLine[], fallback: TaxLine[], grossAmount: number): TaxLine[] {
+  const a = normalizeTaxLineSet(primary);
+  const b = normalizeTaxLineSet(fallback);
+  if (a.length === 0) return b;
+  if (b.length === 0) return a;
+  const scoreA = scoreTaxLineSet(a, grossAmount);
+  const scoreB = scoreTaxLineSet(b, grossAmount);
+  return scoreA <= scoreB ? a : b;
+}
+
 function parseTaxDetailsLines(value: string): TaxLine[] {
   const out: TaxLine[] = [];
   if (!value.trim()) return out;
@@ -372,23 +413,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const forceDuplicate = String(form.get("force_duplicate") ?? "").trim().toLowerCase() === "1";
     const manualDescription = safeString(form.get("beschreibung"));
     const taxDetails = normalizeTaxDetails(result.steuerdetails);
-    const taxLines = parseTaxDetailsLines(taxDetails);
-
-    if (taxLines.length === 0) {
-      const r1 = parseLocaleNumber(result.mwst_satz_1 ?? result.mwst_satz);
-      const n1 = parseLocaleNumber(result.netto_betrag_1 ?? result.netto_betrag);
-      const t1 = parseLocaleNumber(result.mwst_betrag_1 ?? result.mwst_betrag);
-      if (r1 != null && r1 >= 0) {
-        taxLines.push({ rate: r1, netto: n1, tax: t1 });
-      }
-
-      const r2 = parseLocaleNumber(result.mwst_satz_2);
-      const n2 = parseLocaleNumber(result.netto_betrag_2);
-      const t2 = parseLocaleNumber(result.mwst_betrag_2);
-      if (r2 != null && r2 >= 0 && (n2 != null || t2 != null)) {
-        taxLines.push({ rate: r2, netto: n2, tax: t2 });
-      }
+    const parsedTaxLines = parseTaxDetailsLines(taxDetails);
+    const bucketTaxLines: TaxLine[] = [];
+    const r1 = parseLocaleNumber(result.mwst_satz_1 ?? result.mwst_satz);
+    const n1 = parseLocaleNumber(result.netto_betrag_1 ?? result.netto_betrag);
+    const t1 = parseLocaleNumber(result.mwst_betrag_1 ?? result.mwst_betrag);
+    if (r1 != null && r1 >= 0) {
+      bucketTaxLines.push({ rate: r1, netto: n1, tax: t1 });
     }
+
+    const r2 = parseLocaleNumber(result.mwst_satz_2);
+    const n2 = parseLocaleNumber(result.netto_betrag_2);
+    const t2 = parseLocaleNumber(result.mwst_betrag_2);
+    if (r2 != null && r2 >= 0 && (n2 != null || t2 != null)) {
+      bucketTaxLines.push({ rate: r2, netto: n2, tax: t2 });
+    }
+
+    const taxLines = chooseBestTaxLines(parsedTaxLines, bucketTaxLines, grossAmount);
 
     if (taxLines.length > 0 && (vatRate == null || netAmount == null || vatAmount == null)) {
       // Prefer the dominant VAT bucket for primary fields (usually 19% or highest netto).

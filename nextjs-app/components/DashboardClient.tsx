@@ -1143,6 +1143,10 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
   const stageRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const dragRef = useRef<EditorDragState>(null);
+  const pendingStepRef = useRef<EditorStep | null>(null);
+  const loadModeRef = useRef<"initial" | "step">("initial");
+  const shouldInitPointsRef = useRef(true);
+  const [sourceFile, setSourceFile] = useState<File>(file);
   const [imageUrl, setImageUrl] = useState("");
   const [imageSize, setImageSize] = useState<Point>({ x: 0, y: 0 });
   const [stageSize, setStageSize] = useState<Point>({ x: 720, y: 520 });
@@ -1177,8 +1181,15 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
   };
 
   useEffect(() => {
+    loadModeRef.current = "initial";
+    pendingStepRef.current = null;
+    shouldInitPointsRef.current = true;
+    setSourceFile(file);
+  }, [file]);
+
+  useEffect(() => {
     loadedRef.current = false;
-    const url = URL.createObjectURL(file);
+    const url = URL.createObjectURL(sourceFile);
     const image = new Image();
     image.onload = () => {
       loadedRef.current = true;
@@ -1189,15 +1200,22 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
       }
       setPreviewUrl("");
       setPreviewFile(null);
-      setEditorStep("rotate");
+      const pendingStep = pendingStepRef.current;
+      const isInitial = loadModeRef.current === "initial";
+      setEditorStep(pendingStep ?? "rotate");
       setImageUrl(url);
       setImageSize({ x: image.naturalWidth, y: image.naturalHeight });
       setRotation(0);
       setZoom(1);
       setPan({ x: 0, y: 0 });
-      setBrightness(100);
-      setContrast(100);
-      setIsBW(false);
+      if (isInitial) {
+        setBrightness(100);
+        setContrast(100);
+        setIsBW(false);
+      }
+      shouldInitPointsRef.current = true;
+      pendingStepRef.current = null;
+      loadModeRef.current = "step";
     };
     image.onerror = () => {
       if (loadedRef.current) return;
@@ -1207,7 +1225,16 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
     image.src = url;
 
     return () => URL.revokeObjectURL(url);
-  }, [file]);
+  }, [sourceFile]);
+
+  useEffect(() => {
+    if (!shouldInitPointsRef.current) return;
+    if (!imageSize.x || !imageSize.y || !stageSize.x || !stageSize.y) return;
+    const defaults = defaultEditorPoints(stageSize, imageSize);
+    const localDefaults = defaults.map((p) => stageToLocalPoint(p, stageSize, { x: 0, y: 0 }, 0));
+    setPoints(localDefaults);
+    shouldInitPointsRef.current = false;
+  }, [imageSize, stageSize]);
 
   useEffect(() => {
     previewUrlRef.current = previewUrl;
@@ -1229,13 +1256,31 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    if (imageSize.x && imageSize.y) {
-      const defaults = defaultEditorPoints(stageSize, imageSize);
-      const localDefaults = defaults.map((p) => stageToLocalPoint(p, stageSize, { x: 0, y: 0 }, 0));
-      setPoints(localDefaults);
-    }
-  }, [imageSize, stageSize]); // intentional: initialize points once for new stage/image
+  async function buildRotateStepPngFile(): Promise<File | null> {
+    const image = imageRef.current;
+    if (!image) return null;
+    if (Math.abs(rotation) < 0.1) return sourceFile;
+    const rad = (rotation * Math.PI) / 180;
+    const cos = Math.abs(Math.cos(rad));
+    const sin = Math.abs(Math.sin(rad));
+    const w = image.naturalWidth;
+    const h = image.naturalHeight;
+    const outW = Math.max(1, Math.round(w * cos + h * sin));
+    const outH = Math.max(1, Math.round(w * sin + h * cos));
+    const canvas = document.createElement("canvas");
+    canvas.width = outW;
+    canvas.height = outH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, outW, outH);
+    ctx.translate(outW / 2, outH / 2);
+    ctx.rotate(rad);
+    ctx.drawImage(image, -w / 2, -h / 2);
+    const blob = await canvasBlob(canvas, "image/png");
+    if (!blob) return null;
+    return new File([blob], `step-rotated-${file.name.replace(/\.[^.]+$/, "")}.png`, { type: "image/png" });
+  }
 
   useEffect(() => {
     function onMove(event: PointerEvent) {
@@ -1445,14 +1490,17 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
         ? t.dashboard.editorDescTrapez
         : t.dashboard.editorDescPreview;
 
-  function handlePrimaryStep(): void {
+  async function handlePrimaryStep(): Promise<void> {
     if (editorStep === "rotate") {
-      setZoom(1);
-      setPan({ x: 0, y: 0 });
-      const defaults = defaultEditorPoints(stageSize, imageSize);
-      const localDefaults = defaults.map((p) => stageToLocalPoint(p, stageSize, { x: 0, y: 0 }, 0));
-      setPoints(localDefaults);
-      setEditorStep("trapez");
+      const stepFile = await buildRotateStepPngFile();
+      if (!stepFile) {
+        setError("Rotation konnte nicht übernommen werden.");
+        return;
+      }
+      pendingStepRef.current = "trapez";
+      loadModeRef.current = "step";
+      shouldInitPointsRef.current = true;
+      setSourceFile(stepFile);
       return;
     }
     if (editorStep === "trapez") {
@@ -1476,7 +1524,7 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
             <button type="button" className="btn btn-outline btn-sm" onClick={onCancel}>
               {t.common.cancel}
             </button>
-            <button type="button" className="btn btn-primary btn-sm" onClick={handlePrimaryStep}>
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => void handlePrimaryStep()}>
               {editorStep === "preview" ? t.common.ok : t.dashboard.editorNext}
             </button>
           </div>
