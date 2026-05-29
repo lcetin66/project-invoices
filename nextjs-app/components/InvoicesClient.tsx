@@ -320,6 +320,17 @@ export function InvoicesClient() {
     () => extractTaxLines(editState.beschreibung, editState.mwst_satz, editState.mwst_betrag),
     [editState.beschreibung, editState.mwst_satz, editState.mwst_betrag]
   );
+  const viewingTaxLines = useMemo(
+    () =>
+      viewingInvoice
+        ? extractTaxLines(
+            viewingInvoice.beschreibung ?? "",
+            viewingInvoice.mwst_satz ?? "",
+            viewingInvoice.mwst_betrag == null ? "" : String(viewingInvoice.mwst_betrag)
+          )
+        : [],
+    [viewingInvoice]
+  );
 
   function openEdit(invoice: Invoice): void {
     setEditingId(invoice.id);
@@ -617,9 +628,40 @@ export function InvoicesClient() {
                 <div><strong>{t.invoices.category}:</strong> {viewingInvoice.kategorie_name || t.dashboard.uncategorized}</div>
                 <div><strong>{t.invoices.supplier}:</strong> {viewingInvoice.lieferant || t.common.unknown}</div>
                 <div><strong>{t.invoices.gross}:</strong> {formatAmount(viewingInvoice.brutto_betrag)} {viewingInvoice.waehrung || "EUR"}</div>
-                <div><strong>{t.invoices.net}:</strong> {formatAmount(viewingInvoice.netto_betrag)} {viewingInvoice.waehrung || "EUR"}</div>
-                <div><strong>{t.invoices.vatAmount}:</strong> {formatAmount(viewingInvoice.mwst_betrag)} {viewingInvoice.waehrung || "EUR"}</div>
-                <div><strong>{t.invoices.vatRate}:</strong> {viewingInvoice.mwst_satz || "-"}</div>
+                {viewingTaxLines.length > 1 ? (
+                  <>
+                    <div className="search-tax-lines">
+                      <strong>{t.invoices.net}:</strong>
+                      <div>
+                        {viewingTaxLines.map((line, index) => (
+                          <span key={`${line.rate}-${line.netto}-${index}`}>{line.rate}%: {line.netto || "-"} {viewingInvoice.waehrung || "EUR"}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="search-tax-lines">
+                      <strong>{t.invoices.vatAmount}:</strong>
+                      <div>
+                        {viewingTaxLines.map((line, index) => (
+                          <span key={`${line.rate}-${line.tax}-${index}`}>{line.rate}%: {line.tax || "-"} {viewingInvoice.waehrung || "EUR"}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="search-tax-lines">
+                      <strong>{t.invoices.vatRate}:</strong>
+                      <div>
+                        {viewingTaxLines.map((line, index) => (
+                          <span key={`${line.rate}-${index}`}>{line.rate}%</span>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div><strong>{t.invoices.net}:</strong> {formatAmount(viewingInvoice.netto_betrag)} {viewingInvoice.waehrung || "EUR"}</div>
+                    <div><strong>{t.invoices.vatAmount}:</strong> {formatAmount(viewingInvoice.mwst_betrag)} {viewingInvoice.waehrung || "EUR"}</div>
+                    <div><strong>{t.invoices.vatRate}:</strong> {viewingInvoice.mwst_satz || "-"}</div>
+                  </>
+                )}
                 <div><strong>{t.invoices.dueDate}:</strong> {viewingInvoice.faelligkeitsdatum || "-"}</div>
                 <div className="search-view-description">
                   <strong>{t.invoices.description}:</strong>
