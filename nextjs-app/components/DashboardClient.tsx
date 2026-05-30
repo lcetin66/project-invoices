@@ -94,6 +94,12 @@ function isImageFile(file: File): boolean {
   return file.type.toLowerCase().startsWith("image/") || IMAGE_EXTENSIONS.has(extension);
 }
 
+function isHeicLikeFile(file: File): boolean {
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  const mime = (file.type || "").toLowerCase();
+  return extension === "heic" || extension === "heif" || mime.includes("heic") || mime.includes("heif");
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -148,6 +154,29 @@ function imageFromFile(file: File): Promise<HTMLImageElement> {
     };
     image.src = url;
   });
+}
+
+async function convertHeicLikeToJpeg(file: File): Promise<File | null> {
+  if (!isHeicLikeFile(file)) return file;
+  if (typeof createImageBitmap === "undefined") return null;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const blob = await canvasBlob(canvas, "image/jpeg", 0.9);
+    if (!blob) return null;
+    const stem = file.name.replace(/\.[^.]+$/, "");
+    return new File([blob], `${stem}.jpg`, { type: "image/jpeg" });
+  } catch {
+    return null;
+  }
 }
 
 function formatBytes(size: number): string {
@@ -703,17 +732,31 @@ export function DashboardClient({ username }: DashboardClientProps) {
       return;
     }
 
+    let fileForFlow = nextFile;
+    if (isHeicLikeFile(nextFile)) {
+      const converted = await convertHeicLikeToJpeg(nextFile);
+      if (converted) {
+        fileForFlow = converted;
+        applySelectedFile(converted);
+        pushDebug("info", "HEIC konvertiert", `${nextFile.name} -> ${converted.name}`);
+      } else {
+        pushDebug("info", "HEIC Direkt-Upload", "Browser-Editor kann HEIC lokal nicht öffnen, Upload ohne Editor.");
+        await uploadInvoice(nextFile);
+        return;
+      }
+    }
+
     setStatus({ type: "ok", text: "Bild wird geprüft..." });
     try {
-      const duplicatePayload = await checkDuplicatePreUpload(nextFile);
+      const duplicatePayload = await checkDuplicatePreUpload(fileForFlow);
       if (duplicatePayload?.duplicate) {
         const duplicateMessage = String(duplicatePayload.message ?? t.api.duplicateInvoiceProcessed);
         setStatus({ type: "error", text: duplicateMessage });
         pushDebug("error", t.dashboard.apiError, duplicateMessage);
         setDuplicateModal(
           duplicatePayload.previousInvoice ?? {
-            dateiname: nextFile.name,
-            dateityp: nextFile.type || "image/*",
+            dateiname: fileForFlow.name,
+            dateityp: fileForFlow.type || "image/*",
             lieferant: null,
             brutto_betrag: null,
             rechnungsdatum: null
@@ -721,19 +764,23 @@ export function DashboardClient({ username }: DashboardClientProps) {
         );
         return;
       }
-      const clean = await looksLikeCleanInvoiceImage(nextFile);
+      const clean = await looksLikeCleanInvoiceImage(fileForFlow);
       if (clean) {
         pushDebug("info", "Sauberes Bild erkannt", "Ohne Editor direkt verarbeitet.");
-        await uploadInvoice(nextFile);
+        await uploadInvoice(fileForFlow);
       } else {
         pushDebug("info", "Bild mit Hintergrund erkannt", "Editor-Popup wird geöffnet.");
-        setEditorFile(nextFile);
+        setEditorFile(fileForFlow);
       }
     } catch (error) {
       const checkError = error instanceof Error ? error.message : "";
       pushDebug("error", "Bildprüfung fehlgeschlagen", checkError);
       setStatus({ type: "error", text: checkError || t.dashboard.serverUploadError });
-      setEditorFile(nextFile);
+      if (isHeicLikeFile(fileForFlow)) {
+        await uploadInvoice(fileForFlow);
+        return;
+      }
+      setEditorFile(fileForFlow);
     }
   }
 
