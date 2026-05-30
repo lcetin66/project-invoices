@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "heic2any": "^0.0.4",
     "jose": "^5.9.3",
     "mysql2": "^3.11.3",
     "next": "^15.0.0",
