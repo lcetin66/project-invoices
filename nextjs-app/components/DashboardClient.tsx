@@ -94,6 +94,12 @@ function isImageFile(file: File): boolean {
   return file.type.toLowerCase().startsWith("image/") || IMAGE_EXTENSIONS.has(extension);
 }
 
+function isHeicLikeFile(file: File): boolean {
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  const mime = (file.type || "").toLowerCase();
+  return extension === "heic" || extension === "heif" || mime.includes("heic") || mime.includes("heif");
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -148,6 +154,47 @@ function imageFromFile(file: File): Promise<HTMLImageElement> {
     };
     image.src = url;
   });
+}
+
+async function convertHeicLikeToJpeg(file: File): Promise<File | null> {
+  if (!isHeicLikeFile(file)) return file;
+  const stem = file.name.replace(/\.[^.]+$/, "");
+
+  // Fast/native path (works only on browsers with HEIC decode support).
+  if (typeof createImageBitmap !== "undefined") {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d");
+      if (!context) return null;
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      const blob = await canvasBlob(canvas, "image/jpeg", 0.9);
+      if (!blob) return null;
+      return new File([blob], `${stem}.jpg`, { type: "image/jpeg" });
+    } catch {
+      // Fallback to JS converter below.
+    }
+  }
+
+  // Portable fallback path for browsers that cannot decode HEIC natively.
+  try {
+    const mod = (await import("heic2any")) as { default: (opts: { blob: Blob; toType: string; quality?: number }) => Promise<Blob | Blob[]> };
+    const converted = await mod.default({
+      blob: file,
+      toType: "image/jpeg",
+      quality: 0.9
+    });
+    const outBlob = Array.isArray(converted) ? converted[0] : converted;
+    if (!outBlob) return null;
+    return new File([outBlob], `${stem}.jpg`, { type: "image/jpeg" });
+  } catch {
+    return null;
+  }
 }
 
 function formatBytes(size: number): string {
@@ -321,6 +368,7 @@ export function DashboardClient({ username }: DashboardClientProps) {
   const [debugEntries, setDebugEntries] = useState<DebugEntry[]>([]);
   const [activeDurationMs, setActiveDurationMs] = useState(0);
   const lastOrientationLockedRef = useRef(false);
+  const intakeFlowRef = useRef(0);
 
   const [invoices, setInvoices] = useState<Invoice[]>([]);
 
@@ -682,9 +730,9 @@ export function DashboardClient({ username }: DashboardClientProps) {
     await uploadInvoice(file);
   }
 
-  function applySelectedFile(nextFile: File | null): void {
+  function applySelectedFile(nextFile: File | null, syncInput = true): void {
     setFile(nextFile);
-    if (!nextFile || !fileInputRef.current) return;
+    if (!syncInput || !nextFile || !fileInputRef.current) return;
     try {
       const transfer = new DataTransfer();
       transfer.items.add(nextFile);
@@ -695,25 +743,46 @@ export function DashboardClient({ username }: DashboardClientProps) {
   }
 
   async function handleIncomingFile(nextFile: File | null): Promise<void> {
-    applySelectedFile(nextFile);
+    const flowId = intakeFlowRef.current + 1;
+    intakeFlowRef.current = flowId;
+    applySelectedFile(nextFile, false);
     if (!nextFile) return;
+    const isStale = () => flowId !== intakeFlowRef.current;
 
     if (!isImageFile(nextFile)) {
+      if (isStale()) return;
       await uploadInvoice(nextFile);
       return;
     }
 
+    let fileForFlow = nextFile;
+    if (isHeicLikeFile(nextFile)) {
+      const converted = await convertHeicLikeToJpeg(nextFile);
+      if (isStale()) return;
+      if (converted) {
+        fileForFlow = converted;
+        applySelectedFile(converted, false);
+        pushDebug("info", "HEIC konvertiert", `${nextFile.name} -> ${converted.name}`);
+      } else {
+        pushDebug("info", "HEIC Direkt-Upload", "Browser-Editor kann HEIC lokal nicht öffnen, Upload ohne Editor.");
+        if (isStale()) return;
+        await uploadInvoice(nextFile);
+        return;
+      }
+    }
+
     setStatus({ type: "ok", text: "Bild wird geprüft..." });
     try {
-      const duplicatePayload = await checkDuplicatePreUpload(nextFile);
+      const duplicatePayload = await checkDuplicatePreUpload(fileForFlow);
+      if (isStale()) return;
       if (duplicatePayload?.duplicate) {
         const duplicateMessage = String(duplicatePayload.message ?? t.api.duplicateInvoiceProcessed);
         setStatus({ type: "error", text: duplicateMessage });
         pushDebug("error", t.dashboard.apiError, duplicateMessage);
         setDuplicateModal(
           duplicatePayload.previousInvoice ?? {
-            dateiname: nextFile.name,
-            dateityp: nextFile.type || "image/*",
+            dateiname: fileForFlow.name,
+            dateityp: fileForFlow.type || "image/*",
             lieferant: null,
             brutto_betrag: null,
             rechnungsdatum: null
@@ -721,23 +790,31 @@ export function DashboardClient({ username }: DashboardClientProps) {
         );
         return;
       }
-      const clean = await looksLikeCleanInvoiceImage(nextFile);
+      const clean = await looksLikeCleanInvoiceImage(fileForFlow);
+      if (isStale()) return;
       if (clean) {
         pushDebug("info", "Sauberes Bild erkannt", "Ohne Editor direkt verarbeitet.");
-        await uploadInvoice(nextFile);
+        if (isStale()) return;
+        await uploadInvoice(fileForFlow);
       } else {
         pushDebug("info", "Bild mit Hintergrund erkannt", "Editor-Popup wird geöffnet.");
-        setEditorFile(nextFile);
+        setEditorFile(fileForFlow);
       }
     } catch (error) {
       const checkError = error instanceof Error ? error.message : "";
       pushDebug("error", "Bildprüfung fehlgeschlagen", checkError);
       setStatus({ type: "error", text: checkError || t.dashboard.serverUploadError });
-      setEditorFile(nextFile);
+      if (isHeicLikeFile(fileForFlow)) {
+        if (isStale()) return;
+        await uploadInvoice(fileForFlow);
+        return;
+      }
+      setEditorFile(fileForFlow);
     }
   }
 
   async function acceptEditedFile(editedFile: File): Promise<void> {
+    intakeFlowRef.current += 1;
     setEditorFile(null);
     applySelectedFile(editedFile);
     await uploadInvoice(editedFile, false, true);
