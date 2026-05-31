@@ -1,23 +1,39 @@
-import pdfplumber
 import os
 import json
-import requests
 import base64
 import re
 import time
 import tempfile
 from io import BytesIO
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
-from .categories import STANDARDS_KATEGORIEN
-from .prompts import (
-    build_text_invoice_prompt,
-    build_vision_direct_parse_prompt,
-    build_vision_tax_only_prompt,
-)
+try:
+    from .categories import STANDARDS_KATEGORIEN
+    from .prompts import (
+        build_text_invoice_prompt,
+        build_vision_direct_parse_prompt,
+        build_vision_tax_only_prompt,
+    )
+except ImportError:
+    from categories import STANDARDS_KATEGORIEN
+    from prompts import (
+        build_text_invoice_prompt,
+        build_vision_direct_parse_prompt,
+        build_vision_tax_only_prompt,
+    )
 
 try:
-    from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+    from dotenv import load_dotenv
+except Exception:
+    def load_dotenv(*args, **kwargs):  # type: ignore
+        return False
+
+try:
+    import pdfplumber
+except Exception:
+    pdfplumber = None
+
+try:
+    from PIL import Image, ImageEnhance, ImageFilter, ImageOps  # type: ignore[reportMissingImports]
 except Exception:
     Image = None
     ImageEnhance = None
@@ -163,6 +179,8 @@ def _kategorie_nach_produktlogik(ergebnis: dict, text: str = "") -> dict:
 
 def text_extrahieren(pdf_pfad: str) -> str:
     """Text aus PDF extrahieren."""
+    if pdfplumber is None:
+        return ""
     text = ""
     with pdfplumber.open(pdf_pfad) as pdf:
         for seite in pdf.pages:
@@ -1553,6 +1571,10 @@ def _merge_tax_buckets(base: dict, buckets: dict) -> dict:
 
 def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "openrouter", api_model: str = "") -> dict:
     global _LAST_VISION_DEBUG, _LAST_VISION_TRACE
+    try:
+        import requests
+    except Exception:
+        return {}
     _LAST_VISION_DEBUG = ""
     _LAST_VISION_TRACE = {}
     if not os.path.isfile(datei_pfad):
@@ -1907,6 +1929,11 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
 
 def klassifizieren(text: str, api_key: str = "", datei_pfad: str = "", api_provider: str = "openrouter", api_model: str = "") -> dict:
     """KI analysiert die Rechnung und weist Kategorie zu."""
+    try:
+        import requests
+    except Exception:
+        requests = None
+
     def _build_prompt(invoice_text: str) -> str:
         return build_text_invoice_prompt(invoice_text, list(STANDARDS_KATEGORIEN.keys()))
 
@@ -1973,6 +2000,8 @@ def klassifizieren(text: str, api_key: str = "", datei_pfad: str = "", api_provi
         }
 
     try:
+        if requests is None:
+            return nach_schluesselwort(text)
         response = requests.post(url, headers=headers, json=data, timeout=30)
         response_json = response.json()
     except Exception:

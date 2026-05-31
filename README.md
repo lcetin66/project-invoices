@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)
 ![Flask API](https://img.shields.io/badge/API-Flask-000000?logo=flask)
 ![MySQL](https://img.shields.io/badge/Database-MySQL-4479A1?logo=mysql&logoColor=white)
-![Lizenz](https://img.shields.io/badge/Lizenz-Private-red)
+![Lizenz](https://img.shields.io/badge/Lizenz-Proprietary-red)
 
 Umfassende Plattform fuer Rechnungsverwaltung mit KI-gestuetzter Datenerkennung.
 Das Projekt kombiniert eine **Next.js App Router** Webanwendung mit einer **Python Flask Classifier API**.
@@ -243,3 +243,12 @@ Weitere Dokumentation:
 4. Upload erfolgreich, aber KI-Ergebnis schwach/leer
 - Bildqualitaet und Rotation/Crop pruefen.
 - Python-Logs auf OCR/KI-Warnungen kontrollieren.
+
+## Lizenz
+
+Dieses Projekt ist proprietaer und vertraulich.
+Alle Rechte vorbehalten (`All Rights Reserved`).
+
+Ohne eine ausdrueckliche schriftliche Genehmigung duerfen der Quellcode, die Architektur, die Inhalte und die zugehoerigen Assets nicht kopiert, veraendert, weitergegeben, veroefentlicht oder kommerziell genutzt werden.
+
+Wenn spaeter eine kommerzielle Lizenzierung geplant ist, sollte die Nutzung immer ueber einen separaten schriftlichen Vertrag geregelt werden.
