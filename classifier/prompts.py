@@ -25,14 +25,18 @@ _RECHNUNG_TYP_RULE = """- rechnung_typ aus Perspektive des Nutzers:
 
 _NETTO_MWST_RULE = """- WICHTIG (Netto vs. MwSt Spalten):
   - Der Netto-Betrag ist IMMER wesentlich größer als der MwSt-Betrag (ca. 5-mal so groß bei 19% und ca. 14-mal so groß bei 7%).
-  - Wenn du z.B. die Zahlen "100,82" und "19,16" für 19% siehst: "100,82" ist netto_betrag_1, "19,16" ist mwst_betrag_1.
-  - Wenn du z.B. die Zahlen "12,87" und "0,90" für 7% siehst: "12,87" ist netto_betrag_2, "0,90" ist mwst_betrag_2.
+  - Beispiel: Wenn bei 19% ein deutlich größerer Betrag und ein kleinerer MwSt-Betrag zusammenstehen, ist der größere Wert netto_betrag_1 und der kleinere mwst_betrag_1.
+  - Beispiel: Wenn bei 7% ein deutlich größerer Betrag und ein kleinerer MwSt-Betrag zusammenstehen, ist der größere Wert netto_betrag_2 und der kleinere mwst_betrag_2.
   - Vertausche Netto und MwSt NIEMALS!"""
 
 _NO_HALLUCINATION_RULE = """- KEINE HALLUZINATION: Nur Werte zurückgeben, die im Bild klar lesbar sind.
 - Wenn du nicht sicher bist oder ein Wert nicht eindeutig lesbar ist: leerer String.
 - Nichts raten, nichts ergänzen, nichts aus Kontext ableiten.
 - KEINE Fantasie-/Platzhalterwerte wie "N/A", "unknown", "###". In solchen Fällen: leerer String."""
+
+_JSON_ONLY_RULE = "Gib NUR JSON zuruck. Keine Erklarungen."
+_JSON_ONLY_NO_MARKDOWN_RULE = "Keine Erklaerung, kein Markdown, nur JSON."
+_EXPERIENCED_BOOKKEEPER_RULE = "- Rückgabe wie ein erfahrener Buchhalter: relevante Belegdaten vollständig extrahieren."
 
 _BASE_PARSE_FIELDS = """- lieferant: Firmenname
 - rechnung_typ: "eingang" oder "ausgang"
@@ -47,48 +51,6 @@ _BASE_PARSE_FIELDS = """- lieferant: Firmenname
 
 
 # ── Public prompt builders ────────────────────────────────────────────────────
-
-def build_vision_ocr_text_prompt() -> str:
-    """Two-step flow: extract raw OCR text from image before parsing."""
-    return """
-Lies das Belegbild visuell und extrahiere den VOLLSTÄNDIGEN sichtbaren Text.
-WICHTIG:
-- Keine Zusammenfassung, keine Interpretation.
-- Reihenfolge möglichst wie im Dokument (oben nach unten).
-- Auch Datum/Uhrzeit/Belegnummer/Steuer- und Gesamtbeträge übernehmen.
-- Gib NUR JSON zurück: {"ocr_text":"..."}.
-"""
-
-
-def build_vision_parse_prompt(categories: list[str]) -> str:
-    """Parse extracted OCR text (two-step vision flow)."""
-    return f"""
-Analysiere den folgenden Rechnungstext und gib die folgenden Felder als JSON zuruck.
-
-Felder:
-{_BASE_PARSE_FIELDS.format(categories=categories)}
-
-WICHTIG:
-- Für EUR-Belege gilt i.d.R. MwSt 19% oder 7%; gib den explizit gelesenen Satz an.
-- Währung nur aus sichtbarem Symbol/Text ableiten (EUR/€ etc.), NICHT raten.
-{_CATEGORY_RULE}
-{_DATE_RULE}
-{_RECHNUNG_TYP_RULE}
-
-Gib NUR JSON zuruck. Keine Erklarungen.
-"""
-
-
-def build_vision_date_prompt() -> str:
-    """Dedicated single-field extraction: invoice date only."""
-    return f"""
-Lies NUR das Rechnungsdatum aus dem Belegbild.
-WICHTIG:
-{_DATE_RULE}
-- Gib genau ein JSON zurück: {{"rechnungsdatum":"YYYY-MM-DD"}}.
-- Wenn nicht sicher erkennbar, gib {{"rechnungsdatum":""}}.
-"""
-
 
 def build_vision_direct_parse_prompt(categories: list[str]) -> str:
     """Direct one-shot vision parse: image → full JSON in a single API call."""
@@ -128,7 +90,7 @@ Analysiere dieses Belegbild DIREKT und gib NUR JSON im folgenden Schema zurueck:
   "mwst_betrag_2": "string",
   "netto_betrag_2": "string"
 }}
-Keine Erklaerung, kein Markdown, nur JSON.
+{_JSON_ONLY_NO_MARKDOWN_RULE}
 WICHTIG:
 {_NO_HALLUCINATION_RULE}
 - `beleg_nr`, `belegnummer`, `rechnungsnummer`, `kundennummer`, `steuer_id`, `iban_maskiert`, `ust_id_nr`, `vu_nummer`:
@@ -141,7 +103,7 @@ WICHTIG:
 {_CATEGORY_RULE}
 {_DATE_RULE}
 {_RECHNUNG_TYP_RULE}
-- Rückgabe wie ein erfahrener Buchhalter: relevante Belegdaten vollständig extrahieren.
+{_EXPERIENCED_BOOKKEEPER_RULE}
 """
 
 
@@ -166,7 +128,7 @@ Regeln:
 - Wenn 2 Steuerzeilen vorhanden sind: _1 ist die 19%-Zeile (oder der höhere Satz), _2 ist die 7%-Zeile (oder der niedrigere Satz).
 {_NETTO_MWST_RULE}
 - Zahlen exakt vom Beleg übernehmen, Format mit Komma (z.B. 19,16).
-- Keine weiteren Keys, keine Erklärungen.
+- {_JSON_ONLY_RULE}
 """
 
 
@@ -185,7 +147,7 @@ WICHTIG:
 - Bei mehreren Datumsangaben (z.B. TSE Start/Ende/Signatur): nur das Kauf-/Belegdatum verwenden.
 {_RECHNUNG_TYP_RULE}
 
-Gib NUR JSON zuruck. Keine Erklarungen.
+{_JSON_ONLY_RULE}
 
 Rechnungstext:
 {invoice_text}

@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 from .categories import STANDARDS_KATEGORIEN
 from .prompts import (
     build_text_invoice_prompt,
-    build_vision_date_prompt,
     build_vision_direct_parse_prompt,
     build_vision_tax_only_prompt,
 )
@@ -181,48 +180,12 @@ def _pil_lanczos():
     return Image.LANCZOS
 
 
-def _pil_bicubic():
-    if Image is None:
-        return None
-    if hasattr(Image, "Resampling"):
-        return Image.Resampling.BICUBIC
-    return Image.BICUBIC
-
-
 def _clean_ocr_text(text: str) -> str:
     if not text:
         return ""
     rows = [re.sub(r"\s+", " ", ln).strip() for ln in str(text).splitlines()]
     rows = [ln for ln in rows if ln]
     return "\n".join(rows).strip()
-
-
-def _prepare_image_for_local_ocr(datei_pfad: str, use_crop: bool = True):
-    if Image is None or not os.path.isfile(datei_pfad):
-        return None
-    try:
-        with Image.open(datei_pfad) as raw:
-            img = prepare_invoice_image(raw) if use_crop else raw.convert("RGB")
-            gray = img.convert("L")
-            if ImageOps is not None:
-                gray = ImageOps.autocontrast(gray)
-            if ImageFilter is not None:
-                gray = gray.filter(ImageFilter.MedianFilter(size=3))
-            if ImageEnhance is not None:
-                gray = ImageEnhance.Sharpness(gray).enhance(1.7)
-
-            w, h = gray.size
-            target_h = 2200
-            if h > 0 and h < target_h:
-                scale = target_h / float(h)
-                resample = _pil_lanczos()
-                if resample is not None:
-                    gray = gray.resize((max(1, int(w * scale)), target_h), resample=resample)
-
-            bw = gray.point(lambda p: 255 if p > 168 else 0)
-            return bw
-    except Exception:
-        return None
 
 
 def _prepare_image_variants_for_local_ocr(datei_pfad: str):
@@ -1813,63 +1776,6 @@ def _vision_klassifizieren(datei_pfad: str, api_key: str, api_provider: str = "o
             }
         except Exception:
             return {}
-
-    def _vision_extract_date() -> str:
-        date_prompt = build_vision_date_prompt()
-        if api_provider == "openai":
-            d_url = "https://api.openai.com/v1/chat/completions"
-            d_headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
-            d_payload = {
-                "model": vision_model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_ROLE},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": date_prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}},
-                        ],
-                    }
-                ],
-                "temperature": 0,
-            }
-        else:
-            d_url = "https://openrouter.ai/api/v1/chat/completions"
-            d_headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
-            d_payload = {
-                "model": vision_model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_ROLE},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": date_prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}},
-                        ],
-                    }
-                ],
-            }
-        try:
-            d_resp = requests.post(d_url, headers=d_headers, json=d_payload, timeout=45)
-            d_json = d_resp.json()
-            if "choices" not in d_json:
-                return ""
-            d_raw = d_json["choices"][0]["message"]["content"].strip()
-            if d_raw.startswith("```"):
-                d_raw = d_raw.split("```")[1].replace("json", "", 1).strip()
-            parsed = json.loads(d_raw)
-            val = str(parsed.get("rechnungsdatum", "") or "").strip()
-            if re.match(r"^20\d{2}-\d{2}-\d{2}$", val):
-                return val
-            return ""
-        except Exception:
-            return ""
 
     direct_parse_prompt = build_vision_direct_parse_prompt(list(STANDARDS_KATEGORIEN.keys()))
     tax_only_prompt = build_vision_tax_only_prompt()
