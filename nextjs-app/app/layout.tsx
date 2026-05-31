@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "@/app/globals.css";

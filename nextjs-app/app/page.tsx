@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/auth";
 

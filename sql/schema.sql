@@ -1,3 +1,4 @@
+-- Project owner: Levent Cetin
 -- RechnungsManager - Datenbank-Schema
 -- Importieren Sie diese Datei in phpMyAdmin.
 

@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 export type InvoiceType = "eingang" | "ausgang";
 
 export interface SessionUser {

@@ -1,3 +1,4 @@
+<!-- Project owner: Levent Cetin -->
 Kurznotiz (Bildrotation):
 
 Die aktuelle Vorverarbeitung ist stabiler, aber bei einigen horizontalen Belegfotos kann die automatische Rotation noch fehlschlagen.

@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import type { LocaleDict } from "@/lang/de";
 
 export const en = {

@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import { AppShell } from "@/components/AppShell";
 import { InvoicesClient } from "@/components/InvoicesClient";
 import { requireServerSession } from "@/lib/auth";

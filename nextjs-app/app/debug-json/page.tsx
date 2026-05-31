@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import { AppShell } from "@/components/AppShell";
 import { JsonDebugClient } from "@/components/JsonDebugClient";
 import { requireServerSession } from "@/lib/auth";

@@ -1,3 +1,4 @@
+<!-- Project owner: Levent Cetin -->
 # Image Preprocess Kısa Not
 
 - Amaç: Yüklenen fatura/fiş fotoğrafında arka planı mümkün olduğunca atıp sadece belgeye odaklanmak.

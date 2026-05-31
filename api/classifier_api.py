@@ -1,3 +1,4 @@
+# Project owner: Levent Cetin
 #!/usr/bin/env python3
 """Rechnungs-Klassifizierer REST-API (Flask)"""
 

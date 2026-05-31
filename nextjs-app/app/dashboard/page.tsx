@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import { AppShell } from "@/components/AppShell";
 import { DashboardStatsClient } from "@/components/DashboardStatsClient";
 import { requireServerSession } from "@/lib/auth";

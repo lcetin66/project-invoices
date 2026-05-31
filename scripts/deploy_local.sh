@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Project owner: Levent Cetin
 set -euo pipefail
 
 SRC_DIR="$(cd "$(dirname "$0")/.." && pwd)"

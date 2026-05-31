@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import { AppShell } from "@/components/AppShell";
 import { SearchClient } from "@/components/SearchClient";
 import { requireServerSession } from "@/lib/auth";

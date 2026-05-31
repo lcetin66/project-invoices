@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 "use client";
 // PieChart.tsx — 3D perspective pie chart using SVG ellipse + depth walls
 import React, { useState } from "react";

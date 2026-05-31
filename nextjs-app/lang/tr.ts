@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import { de, type LocaleDict } from "@/lang/de";
 
 // Gewünscht: Die Türkisch-Option soll aktuell 1:1 Deutsch anzeigen.

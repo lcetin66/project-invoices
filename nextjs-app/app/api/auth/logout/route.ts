@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import { NextResponse } from "next/server";
 import { clearSessionCookie } from "@/lib/auth";
 

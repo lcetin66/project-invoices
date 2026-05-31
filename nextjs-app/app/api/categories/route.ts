@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import { NextRequest, NextResponse } from "next/server";
 import { requireRouteSession } from "@/lib/auth";
 import { createCategory, listCategories } from "@/lib/repository";

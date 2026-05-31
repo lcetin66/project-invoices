@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Project owner: Levent Cetin
 set -euo pipefail
 
 PROJECT_DIR="/Users/lventctn/Developer/PythonDersleri/PycharmProjects/Masterschool-Project"

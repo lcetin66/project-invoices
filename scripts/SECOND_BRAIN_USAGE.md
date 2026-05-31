@@ -1,3 +1,4 @@
+<!-- Project owner: Levent Cetin -->
 # Second Brain Quick Usage
 
 Varsayilan hedef:

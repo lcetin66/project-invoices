@@ -1,3 +1,4 @@
+<!-- Project owner: Levent Cetin -->
 # AI Handoff - Image Classification Issue
 
 ## Context

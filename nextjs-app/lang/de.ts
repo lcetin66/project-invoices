@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 export const de = {
   app: {
     name: "RechnungsManager",

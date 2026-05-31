@@ -1,3 +1,4 @@
+# Project owner: Levent Cetin
 """Prompt templates used by OCR and classification flows."""
 
 # ── Shared rule blocks ────────────────────────────────────────────────────────

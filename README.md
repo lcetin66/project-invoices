@@ -1,3 +1,4 @@
+<!-- Project owner: Levent Cetin -->
 # RechnungsManager
 
 ![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)

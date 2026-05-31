@@ -1,3 +1,4 @@
+# Project owner: Levent Cetin
 # Standards-Kategorien
 
 STANDARDS_KATEGORIEN = {

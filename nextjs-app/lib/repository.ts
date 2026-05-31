@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import type { RowDataPacket } from "mysql2/promise";
 import { AI_OPTIONS } from "@/lib/constants";
 import { execute, getAppSetting, queryRows, setAppSetting } from "@/lib/db";

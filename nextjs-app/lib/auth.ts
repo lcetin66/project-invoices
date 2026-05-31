@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import { compare } from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";

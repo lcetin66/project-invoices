@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import { de } from "@/lang/de";
 import { en } from "@/lang/en";
 import { tr } from "@/lang/tr";

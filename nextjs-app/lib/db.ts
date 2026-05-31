@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import mysql, { type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import type { ExecuteValues } from "mysql2";
 

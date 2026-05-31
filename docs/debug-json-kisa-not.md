@@ -1,3 +1,4 @@
+<!-- Project owner: Levent Cetin -->
 # Debug JSON Kısa Not
 
 - Kullanıcı beklentisi: uzun JSON formatı korunacak, özellikle `mwst_*_1/_2` alanları doğru doldurulacak.

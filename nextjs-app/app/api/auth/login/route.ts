@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import { NextRequest, NextResponse } from "next/server";
 import { applySessionCookie, signSession, verifyCredentials } from "@/lib/auth";
 import { t } from "@/lang";

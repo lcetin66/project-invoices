@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import { redirect } from "next/navigation";
 import { LanguageProvider } from "@/components/LanguageProvider";
 import { LoginForm } from "@/components/LoginForm";

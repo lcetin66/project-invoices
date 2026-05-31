@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import { NextRequest, NextResponse } from "next/server";
 import { getRouteSession } from "@/lib/auth";
 

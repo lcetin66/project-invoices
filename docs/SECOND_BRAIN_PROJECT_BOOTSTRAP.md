@@ -1,3 +1,4 @@
+<!-- Project owner: Levent Cetin -->
 # Second Brain Project Bootstrap (Reusable)
 
 Bu dokuman, yeni bir projede AI asistanlari (Codex, Claude vb.) ile calisirken

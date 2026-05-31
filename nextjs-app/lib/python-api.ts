@@ -1,3 +1,4 @@
+// Project owner: Levent Cetin
 import type { AiSettings } from "@/lib/types";
 
 function getApiBase(): string {
