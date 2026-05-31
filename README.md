@@ -249,6 +249,8 @@ Weitere Dokumentation:
 Dieses Projekt ist proprietaer und vertraulich.
 Alle Rechte vorbehalten (`All Rights Reserved`).
 
+Die vollstaendige Lizenz befindet sich in der Datei [LICENSE](./LICENSE).
+
 Ohne eine ausdrueckliche schriftliche Genehmigung duerfen der Quellcode, die Architektur, die Inhalte und die zugehoerigen Assets nicht kopiert, veraendert, weitergegeben, veroefentlicht oder kommerziell genutzt werden.
 
 Wenn spaeter eine kommerzielle Lizenzierung geplant ist, sollte die Nutzung immer ueber einen separaten schriftlichen Vertrag geregelt werden.
