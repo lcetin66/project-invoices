@@ -11,6 +11,13 @@ function formatAmount(value: number | null | undefined): string {
   return Number.isFinite(num) ? num.toFixed(2) : "0.00";
 }
 
+function isReturnInvoiceBadgeCandidate(invoice: Pick<Invoice, "brutto_betrag" | "beschreibung">): boolean {
+  const gross = Number(invoice.brutto_betrag ?? 0);
+  if (Number.isFinite(gross) && gross < 0) return true;
+  const text = String(invoice.beschreibung || "").toLowerCase();
+  return /\b(erstattung|rückgabe|rueckgabe|retoure|retour|gutschrift|storno|bonrückgabe|bonrueckgabe)\b/i.test(text);
+}
+
 type TaxLine = {
   rate: string;
   netto: string;
@@ -354,6 +361,7 @@ export function SearchClient() {
               const fileName = invoice.dateiname || "";
               const fileUrl = `/api/uploads/${encodeURIComponent(fileName)}`;
               const isPdf = fileName.toLowerCase().endsWith(".pdf") || String(invoice.dateityp || "").toLowerCase().includes("pdf");
+              const isReturnBadge = isReturnInvoiceBadgeCandidate(invoice);
               return (
                 <div className="rechnung-row" key={invoice.id}>
                   <div
@@ -390,8 +398,8 @@ export function SearchClient() {
                   </div>
                   <div className="row-main">
                     <div className="row-main-top">
-                      <span className="rechnung-badge" style={{ background: invoice.farbe || "#95A5A6" }}>
-                        {invoice.kategorie_name || t.dashboard.uncategorized}
+                      <span className="rechnung-badge" style={{ background: isReturnBadge ? "#D14343" : invoice.farbe || "#95A5A6" }}>
+                        {isReturnBadge ? "Rückgabe" : invoice.kategorie_name || t.dashboard.uncategorized}
                       </span>
                       <span className="row-meta"><strong>{renderHighlightedText(invoice.lieferant || t.common.unknown)}</strong></span>
                     </div>

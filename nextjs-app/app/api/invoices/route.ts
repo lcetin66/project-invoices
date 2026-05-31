@@ -71,6 +71,44 @@ function parseLocaleNumber(value: unknown): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+function normalizeAmountSign(value: number | null, sign: 1 | -1): number | null {
+  if (value == null || Number.isNaN(value)) return null;
+  if (sign === 1) return value;
+  return -Math.abs(value);
+}
+
+function inferInvoiceSign(result: Record<string, unknown>, ocrPreview?: string): 1 | -1 {
+  const numericCandidates: Array<number | null> = [
+    parseLocaleNumber(result.brutto_betrag ?? result.gesamt_betrag ?? result.total),
+    parseLocaleNumber(result.netto_betrag_1 ?? result.netto_betrag),
+    parseLocaleNumber(result.mwst_betrag_1 ?? result.mwst_betrag),
+    parseLocaleNumber(result.netto_betrag_2),
+    parseLocaleNumber(result.mwst_betrag_2)
+  ];
+  if (numericCandidates.some((n) => n != null && n < 0)) {
+    return -1;
+  }
+
+  const mergedText = [
+    ...Object.values(result).map((v) => String(v ?? "")),
+    String(ocrPreview ?? "")
+  ]
+    .join("\n")
+    .toLowerCase();
+
+  const hasRefundKeyword =
+    /\b(erstattung|rückgabe|rueckgabe|retoure|retour|gutschrift|storno|bonrückgabe|bonrueckgabe)\b/i.test(mergedText);
+  const hasNegativeAmount = /-\s*\d{1,4}(?:[.,]\d{2})/.test(mergedText);
+  if (hasRefundKeyword && hasNegativeAmount) {
+    return -1;
+  }
+  return 1;
+}
+
+function hasReturnKeyword(value: string): boolean {
+  return /\b(erstattung|rückgabe|rueckgabe|retoure|retour|gutschrift|storno|bonrückgabe|bonrueckgabe)\b/i.test(value);
+}
+
 function normalizeTaxDetails(value: unknown): string {
   let raw = String(value ?? "").trim();
   if (!raw) return "";
@@ -350,20 +388,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const result = classifier.ergebnis;
 
     const supplier = safeString(result.lieferant ?? result.vendor);
-    const grossAmount = parseLocaleNumber(result.brutto_betrag ?? result.total) ?? 0;
+    let sign: 1 | -1 = inferInvoiceSign(result as Record<string, unknown>, classifier.debug?.ocr_text_preview);
+    let grossAmount = parseLocaleNumber(result.brutto_betrag ?? result.total) ?? 0;
     let netAmount = parseLocaleNumber(result.netto_betrag_1 ?? result.netto_betrag);
     let vatAmount = parseLocaleNumber(result.mwst_betrag_1 ?? result.mwst_betrag);
     let vatRate = parseLocaleNumber(result.mwst_satz_1 ?? result.mwst_satz);
     const currency = safeString(result.waehrung) || "EUR";
 
+    grossAmount = normalizeAmountSign(grossAmount, sign) ?? 0;
+    netAmount = normalizeAmountSign(netAmount, sign);
+    vatAmount = normalizeAmountSign(vatAmount, sign);
+
     // If vision found gross but omitted tax/net fields, derive sensible defaults for edit form.
-    if (grossAmount > 0 && (netAmount == null || vatAmount == null)) {
+    const grossAbs = Math.abs(grossAmount);
+    if (grossAbs > 0 && (netAmount == null || vatAmount == null)) {
       if (vatRate == null && currency === "EUR") {
         vatRate = 19;
       }
       if (vatRate != null && vatRate > 0) {
-        const calculatedNet = Number((grossAmount / (1 + vatRate / 100)).toFixed(2));
-        const calculatedVat = Number((grossAmount - calculatedNet).toFixed(2));
+        const calculatedNetAbs = Number((grossAbs / (1 + vatRate / 100)).toFixed(2));
+        const calculatedVatAbs = Number((grossAbs - calculatedNetAbs).toFixed(2));
+        const calculatedNet = sign === -1 ? -calculatedNetAbs : calculatedNetAbs;
+        const calculatedVat = sign === -1 ? -calculatedVatAbs : calculatedVatAbs;
         if (netAmount == null) netAmount = calculatedNet;
         if (vatAmount == null) vatAmount = calculatedVat;
       }
@@ -413,23 +459,35 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const forceDuplicate = String(form.get("force_duplicate") ?? "").trim().toLowerCase() === "1";
     const manualDescription = safeString(form.get("beschreibung"));
     const taxDetails = normalizeTaxDetails(result.steuerdetails);
-    const parsedTaxLines = parseTaxDetailsLines(taxDetails);
+    const parsedTaxLines = parseTaxDetailsLines(taxDetails).map((line) => ({
+      rate: line.rate,
+      netto: normalizeAmountSign(line.netto, sign),
+      tax: normalizeAmountSign(line.tax, sign)
+    }));
     const bucketTaxLines: TaxLine[] = [];
     const r1 = parseLocaleNumber(result.mwst_satz_1 ?? result.mwst_satz);
     const n1 = parseLocaleNumber(result.netto_betrag_1 ?? result.netto_betrag);
     const t1 = parseLocaleNumber(result.mwst_betrag_1 ?? result.mwst_betrag);
     if (r1 != null && r1 >= 0) {
-      bucketTaxLines.push({ rate: r1, netto: n1, tax: t1 });
+      bucketTaxLines.push({
+        rate: r1,
+        netto: normalizeAmountSign(n1, sign),
+        tax: normalizeAmountSign(t1, sign)
+      });
     }
 
     const r2 = parseLocaleNumber(result.mwst_satz_2);
     const n2 = parseLocaleNumber(result.netto_betrag_2);
     const t2 = parseLocaleNumber(result.mwst_betrag_2);
     if (r2 != null && r2 >= 0 && (n2 != null || t2 != null)) {
-      bucketTaxLines.push({ rate: r2, netto: n2, tax: t2 });
+      bucketTaxLines.push({
+        rate: r2,
+        netto: normalizeAmountSign(n2, sign),
+        tax: normalizeAmountSign(t2, sign)
+      });
     }
 
-    const taxLines = chooseBestTaxLines(parsedTaxLines, bucketTaxLines, grossAmount);
+    let taxLines = chooseBestTaxLines(parsedTaxLines, bucketTaxLines, grossAmount);
 
     if (taxLines.length > 0 && (vatRate == null || netAmount == null || vatAmount == null)) {
       // Prefer the dominant VAT bucket for primary fields (usually 19% or highest netto).
@@ -444,9 +502,35 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (dominant.netto != null) netAmount = dominant.netto;
     }
 
+    // Late sign correction:
+    // Some return/refund hints appear only in description/payment fields after parsing.
+    if (sign !== -1) {
+      const lateSignHint = [
+        safeString(result.zahlungsart),
+        safeString(result.zahlungsmittel),
+        safeString(result.beschreibung),
+        taxDetails,
+        safeString(form.get("beschreibung"))
+      ]
+        .join("\n")
+        .toLowerCase();
+      if (hasReturnKeyword(lateSignHint)) {
+        sign = -1;
+        grossAmount = normalizeAmountSign(grossAmount, sign) ?? 0;
+        netAmount = normalizeAmountSign(netAmount, sign);
+        vatAmount = normalizeAmountSign(vatAmount, sign);
+        taxLines = taxLines.map((line) => ({
+          ...line,
+          netto: normalizeAmountSign(line.netto, sign),
+          tax: normalizeAmountSign(line.tax, sign)
+        }));
+      }
+    }
+
     // Hard guard: net cannot be identical to gross when VAT exists.
-    if (grossAmount > 0 && netAmount != null && vatAmount != null && vatAmount > 0 && netAmount >= grossAmount) {
-      netAmount = Number((grossAmount - vatAmount).toFixed(2));
+    if (grossAbs > 0 && netAmount != null && vatAmount != null && Math.abs(vatAmount) > 0 && Math.abs(netAmount) >= grossAbs) {
+      const corrected = Number((grossAbs - Math.abs(vatAmount)).toFixed(2));
+      netAmount = sign === -1 ? -corrected : corrected;
     }
 
     const receiptSummary = buildReceiptSummary(result as Record<string, unknown>, taxLines, currency);

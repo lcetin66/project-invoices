@@ -100,6 +100,13 @@ function isHeicLikeFile(file: File): boolean {
   return extension === "heic" || extension === "heif" || mime.includes("heic") || mime.includes("heif");
 }
 
+function isReturnInvoiceBadgeCandidate(invoice: Pick<Invoice, "brutto_betrag" | "beschreibung">): boolean {
+  const gross = Number(invoice.brutto_betrag ?? 0);
+  if (Number.isFinite(gross) && gross < 0) return true;
+  const text = String(invoice.beschreibung || "").toLowerCase();
+  return /\b(erstattung|rückgabe|rueckgabe|retoure|retour|gutschrift|storno|bonrückgabe|bonrueckgabe)\b/i.test(text);
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -1056,14 +1063,15 @@ export function DashboardClient({ username }: DashboardClientProps) {
             {invoices.slice(0, 2).map((invoice) => {
               const fileName = invoice.dateiname || "";
               const isPdf = fileName.toLowerCase().endsWith(".pdf") || invoice.dateityp.includes("pdf");
+              const isReturnBadge = isReturnInvoiceBadgeCandidate(invoice);
               return (
                 <div className="rechnung-card fade-in" key={invoice.id}>
                   <div className="rechnung-card-header">
                     <span
                       className="rechnung-badge"
-                      style={{ background: invoice.farbe || categoryColor(invoice.kategorie_name || "Sonstige") }}
+                      style={{ background: isReturnBadge ? "#D14343" : invoice.farbe || categoryColor(invoice.kategorie_name || "Sonstige") }}
                     >
-                      {invoice.kategorie_name || t.dashboard.uncategorized}
+                      {isReturnBadge ? "Rückgabe" : invoice.kategorie_name || t.dashboard.uncategorized}
                     </span>
                     <span className="rechnung-datum">{String(invoice.hochladezeit).slice(0, 10)}</span>
                   </div>
@@ -1572,6 +1580,12 @@ function DashboardImageEditorModal({ file, onCancel, onConfirm }: DashboardImage
       const stepFile = await buildRotateStepPngFile();
       if (!stepFile) {
         setError("Rotation konnte nicht übernommen werden.");
+        return;
+      }
+      // If rotation change is tiny, buildRotateStepPngFile returns the same File object.
+      // In that case, switching sourceFile would be a no-op and the UI would appear stuck on step 1.
+      if (stepFile === sourceFile) {
+        setEditorStep("trapez");
         return;
       }
       pendingStepRef.current = "trapez";
