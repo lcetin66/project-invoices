@@ -14,6 +14,7 @@ Das Projekt kombiniert eine **Next.js App Router** Webanwendung mit einer **Pyth
 
 - [Ueberblick](#ueberblick)
 - [Hauptfunktionen](#hauptfunktionen)
+- [Screenshots](#screenshots)
 - [Technische Architektur](#technische-architektur)
 - [Projektstruktur (Tree)](#projektstruktur-tree)
 - [Voraussetzungen](#voraussetzungen)
@@ -43,6 +44,36 @@ RechnungsManager fokussiert sich auf folgende Aufgaben:
 - Kategorie- und Budgetverwaltung
 - Dashboard mit KPIs und Diagrammen
 - Duplicate-Pruefung und Bestaetigungsdialoge
+
+## Screenshots
+
+### Login
+
+![Login](./nextjs-app/github_screenshots/1-login.png)
+
+### Dashboard
+
+![Dashboard](./nextjs-app/github_screenshots/2-dashboard.png)
+
+### Eingabe
+
+![Eingabe](./nextjs-app/github_screenshots/3-eingabe.png)
+
+### Suche
+
+![Suche](./nextjs-app/github_screenshots/4-suchen.png)
+
+### Rechnungen
+
+![Rechnungen](./nextjs-app/github_screenshots/5-rechnungen.png)
+
+### Verwaltung
+
+![Verwaltung](./nextjs-app/github_screenshots/6-vewaltung.png)
+
+### Benutzer
+
+![Benutzer](./nextjs-app/github_screenshots/7-benutzer.png)
 
 ## Technische Architektur
 
